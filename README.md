@@ -1,0 +1,70 @@
+# ⚡ CmdKeepa — local-first snippets
+
+A cozy, personal snippet manager. Hosted publicly, but **your snippets never leave your browser** — everything lives in `localStorage`. No login, no backend, no database.
+
+Think "Raycast/Obsidian for code": open, `Ctrl+K`, find `docker postgres`, copy, done.
+
+## Run it
+
+```bash
+npm install
+npm run dev      # local dev
+npm run build    # production build → dist/
+npm run preview  # serve the build
+```
+
+Deploy `dist/` to any static host (Vercel, Netlify, GitHub Pages, …).
+
+## Features
+
+**Core (MVP)**
+- Create / edit / delete snippets with CodeMirror (highlighting, line numbers, folding, search keymap)
+- 20 languages, auto-detect + title/tag suggestions
+- Global search across title, code, description, tags, language
+- Tags (click to filter) + collections + favorites
+- Copy (variable-rendered), dark/light cozy themes, font size, word wrap
+
+**Beyond MVP**
+- `Ctrl+K` command palette (commands + snippet jumping)
+- Quick capture (`paste → save → organize later`)
+- `{{variables}}` — fill values, copy ready-to-run commands
+- Version history with line diff (snapshotted on every edit)
+- Fork / duplicate snippets
+- Serverless share links (`#/s/…` — snippet compressed into the URL)
+- JS/TS runner + HTML preview
+- Export / import JSON (all or per-collection), storage meter, local stats
+- PWA manifest, offline-friendly static build
+
+## Structure
+
+```
+src/
+  App.tsx                  # composition + UI state only (~400 lines)
+  hooks/useStore.ts        # snippets/collections/settings/theme state, persistence, CRUD
+  lib/core.ts              # types, search, language detection, variables, share codec, export
+  lib/codeLangs.ts         # CodeMirror language mapping
+  lib/langBadge.ts         # language badge styling
+  lib/clipboard.ts         # clipboard with fallback
+  components/
+    Sidebar.tsx            # library / collections / tags
+    SnippetList.tsx        # filter + result cards
+    SnippetDetail.tsx      # viewer, variables, runner, version history + diff
+    EditorForm.tsx         # create/edit form (owns its draft, Ctrl+S)
+    Palette.tsx            # Ctrl+K command palette
+    Dialogs.tsx            # welcome, quick capture, share, incoming share, settings
+    CodeEditor.tsx         # CodeMirror wrapper
+    ui.tsx                 # ActionBtn, Modal primitives
+```
+
+## Data model
+
+```json
+{
+  "app": "cmdkeepa",
+  "version": 1,
+  "snippets": [{ "id, title, code, language, description, tags[], collectionId, favorite, createdAt, updatedAt, views, versions[]" }],
+  "collections": [{ "id, name, emoji, createdAt" }]
+}
+```
+
+Keys: `cmdkeepa.snippets.v1`, `cmdkeepa.collections.v1`, `cmdkeepa.settings.v1`, `cmdkeepa.theme`. Back up with Export — `localStorage` is ~5 MB per origin.

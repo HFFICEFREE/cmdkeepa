@@ -1,0 +1,12 @@
+{
+  "name": "CmdKeepa — local-first snippets",
+  "short_name": "CmdKeepa",
+  "description": "A cozy, local-first snippet manager. Your snippets never leave your browser.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#1c1917",
+  "theme_color": "#f59e0b",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
