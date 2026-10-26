@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# CmdKeepa nativo (assembly) — artefatos de build, código fica versionado
+native/*.o
+native/cmdkeepa
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
