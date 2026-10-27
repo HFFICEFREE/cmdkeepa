@@ -30,3 +30,6 @@ native/cmdkeepa
 # Python (scripts de teste)
 __pycache__/
 *.pyc
+
+# Pacote portátil gerado por native/bundle.sh
+native/dist/

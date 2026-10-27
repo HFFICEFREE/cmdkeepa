@@ -20,7 +20,8 @@ nasm -f elf64 -w+number-overflow -w+orphan-labels ui_f2.asm -o ui_f2.o
 echo "[4/5] nasm main.asm"
 nasm -f elf64 -w+number-overflow -w+orphan-labels main.asm -o main.o
 echo "[5/5] link gcc -no-pie -lX11"
-gcc main.o platform_x11.o db.o ui_f2.o -no-pie -lX11 -ldl -o cmdkeepa
+gcc main.o platform_x11.o db.o ui_f2.o -no-pie -lX11 -ldl \
+    -Wl,--disable-new-dtags,-rpath,'$ORIGIN/lib' -o cmdkeepa
 
 echo "ok: ./native/cmdkeepa ($(file -b cmdkeepa | cut -d, -f1-2))"
 echo "rode: ./native/cmdkeepa   (Esc ou X fecha)"

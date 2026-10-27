@@ -26,5 +26,6 @@ for f in platform_x11 db ui_f2 main; do
     nasm -f elf64 -I"$SRC/" "$SRC/$f.asm" -o "$SRC/$f.o"
 done
 echo "[build] link gcc -no-pie -lX11"
-gcc "$SRC/main.o" "$SRC/platform_x11.o" "$SRC/db.o" "$SRC/ui_f2.o" -no-pie -lX11 -ldl -o "$SRC/cmdkeepa"
+gcc "$SRC/main.o" "$SRC/platform_x11.o" "$SRC/db.o" "$SRC/ui_f2.o" -no-pie -lX11 -ldl \
+    -Wl,--disable-new-dtags,-rpath,'$ORIGIN/lib' -o "$SRC/cmdkeepa"
 echo "ok: $SRC/cmdkeepa ($(file -b "$SRC/cmdkeepa" | cut -d, -f1-2))"

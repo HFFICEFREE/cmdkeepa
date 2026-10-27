@@ -62,6 +62,21 @@ O binário fica fora do `main` (`.gitignore`); ele entra **só no commit da
 tag** de release. A tag ganha o executável pronto e o `main` segue sem ele.
 Para ensaiar: `--no-push` (não envia) ou `--dry-run` (só mostra o plano).
 
+Para distribuir sem depender das libs do sistema:
+
+```bash
+./native/bundle.sh   # native/dist/cmdkeepa-linux-x86_64{,.tar.gz}
+```
+
+O pacote leva o binário stripped + as libs em `lib/` (X11, Xft, fontconfig,
+freetype e a cadeia delas), resolvidas por `$ORIGIN/lib`. **Ficam de fora:**
+glibc (≥ 2.34), servidor X (ou XWayland) e as fontes do sistema — substituir
+o libc ao lado do binário não é suportado. Para anexar numa release:
+
+```bash
+gh release upload v1.0.0 native/dist/cmdkeepa-linux-x86_64.tar.gz
+```
+
 ## Features
 
 **Core (MVP)**
