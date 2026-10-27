@@ -48,13 +48,20 @@
   atualize o `cmp` no main.** Kinds atuais: 2=bs 3=up 4=down 5=copy 6=save
   7=fav 8=clearq 9=enter 10=esc 11/12=setas 13=mouse 14=cria-snippet
   15/16=del-snippet 17=tab 18=cria-coll 19=renomeia-coll 20=del-coll
-  21=movecoll (snippet -> próxima coll, circula até unfiled) 22=help (Ctrl+H).
+  21=movecoll (snippet -> próxima coll, circula até unfiled) 22=help (Ctrl+H)
+  23=button-release 24=motion (arrasto: seleção de texto no código)
+  25=paste pronto (SelectionNotify do XConvertSelection) 26=paste (Ctrl+V).
 - `edit_mode`: 0=normal 1=código 2=título 3=nome de coleção 4=seletor de
   coleção **5=language 6=tags**. Modos 5/6 usam helpers genéricos
   `field_setup`/`fld_*` (rdi=base, rsi=&len dword, rdx=&cursor, ecx=cap) e
   `fld_char` p/ o char pendente (scratch morre em call). Ciclo de Tab:
   2→1→5→6→2. `language` vazia vira `plaintext` no commit. Up/Down no modo 5
   cicla `lang_tab` (slots de LANG_SLOT=16 bytes).
+- **Clicar fora da coluna de detalhe encerra a edição**: com `edit_mode` em
+  1/2/3/5/6/7, um clique com x<601 (sidebar, busca ou lista) chama
+  `leave_edit_commit` (comita; em falha de save permanece editando) e depois
+  processa o clique normalmente. O modo 4 (seletor de coleção) é exceção:
+  clique na sidebar escolhe a coleção.
 - **`Ctrl+R` é contextual** (não deixe tecla sem efeito dependendo da seleção):
   com coleção selecionada (`libsel>=3`) renomeia; com snippet (`libsel<3`)
   abre o seletor de coleção (mesmo caminho do `Ctrl+L`). Clicar numa coleção
@@ -85,6 +92,15 @@
 - `INPUT_MASK` precisa cobrir todo evento tratado (`ButtonPressMask` etc.).
 - `XButtonEvent`: `x@64, y@68, button@84` (dwords). Wheel = botões 4/5.
 - Teclas sintéticas (teste) chegam com `state=0`: sem Shift (ver `keys.py`).
+- Clipboard é snapshot: Ctrl+C copia para `clip_buf` e `SelectionRequest`
+  serve esse buffer imutável; nunca aponte `clip_ptr` para `sn_recs`.
+  `SelectionClear` zera `clip_len` e volta `clip_ptr` para `clip_buf`.
+- Seleção de texto (código): soltar o botão ANCORA (`sel_active=1`,
+  `btn_down=0` bloqueia hover no `.motion`); sem auto-cópia. Ctrl+C copia o
+  trecho (`sel_copy`), Ctrl+X recorta (`sel_copy` + `sel_delete_range`,
+  kind 20 no modo código), Backspace/Delete/digitar consomem via
+  `sel_maybe_delete`, setas/Tab/commit/cancel/begin_edit limpam. `copy` sem
+  seleção continua copiando o código inteiro.
 
 ## 5. Geometria (convenção anti-"1px errado")
 
@@ -103,6 +119,14 @@
   antes de `cur_rec`/`begin_edit`** (`.mknew` snapshotou o rec errado por
   filtro velho — F5: título com NULs, `v0` alheio).
 - `draw` faz clamp de `sel/scroll`; handlers podem ser relaxados quanto a isso.
+- Nos modos de edição de texto (1/2/5/6), **`begin_edit` fixa `edit_rec`** e
+  todos os helpers de edição/cancel/commit/desenho usam **`resolve_rec`**.
+  `cur_rec` direto só vale para o alvo inicial e para código fora da edição;
+  modos 3/4 continuam com `coll_cur`/`pick_rec`.
+- Mutação chama `db_snapshot` antes; se `db_save` falhar, chame `db_restore`.
+  Deleções restauram e refazem o filtro; commit/rename falhado mantém o editor
+  aberto para retry, sem duplicar versão. `db_save` recusa salvar em modo
+  somente-leitura.
 
 ## 7. Round-trip JSON (`db.asm`)
 
@@ -112,9 +136,54 @@
 - `db_save` grava **no mesmo caminho carregado** (é o banco), atomicamente:
   escreve `<path>.tmp`, `fsync`, `rename`. Não existe sidecar. Toda mutação
   precisa chamar `db_save` no próprio handler (favoritar não salvava — F7).
+  Se qualquer emissor atingir `FILE_MAX`, `db_save` aborta antes de escrever,
+  remove o temporário e retorna `-1`; nunca renomeia JSON truncado.
+- `db_load` só faz seed quando `open` retorna `ENOENT`. Arquivo existente com
+  erro de abertura/leitura, oversize, JSON malformado ou import com perdas não
+  é sobrescrito: `db_error`/`db_readonly` são setados, a UI abre vazia em modo
+  somente-leitura e o app mostra o motivo no boot. Falha de parse/limite limpa
+  o estado em memória (`db_clear_state`).
 - `.seed` materializa o seed no 1º start (ids/datas estáveis entre execuções).
-- `versions[]`: até 8, `{code 2KB + at}`, `vnum` com cap. Validar com
+- IDs novos usam `P-epoch-pid-seq` (`make_sn_id`/`make_coll_id`) com checagem
+  de colisão no namespace; nunca assuma que o segundo == segundo anterior.
+- `\uXXXX` decodifica para UTF-8 (com pares substitutos), `U+0000` vira
+  `U+FFFD`, e truncamento por limite marca `db_lossy` em vez de salvar.
+- `versions[]`: até 8, `{code 4KB + at + note}`, `vnum` com cap. Validar com
   `jsoncheck.py` após todo fluxo que salva.
+- Commit versiona SÓ com diff real de código (len+bytes vs backup); só
+  metadados atualiza updatedAt e salva sem empurrar versão; sem diff algum
+  fecha com `sem alteracoes` (fix #21). Versão guarda código CHEIO
+  (VER_CODE_LEN==REC_CODE_LEN) + `note` do web; offsets via VER_AT_OFF/
+  VER_NOTE_OFF, REC_SIZE derivado (fix #22). Nota `null` vira "".
+- Detail somente-leitura rende código da linha 0 (`edit_mode==1` usa scroll);
+  CRLF=1 terminador e CR não entra no `linelen`/render, CR solitário é
+  conteúdo (fix #23/#24). Linha lang-tags usa LANG_DISP_MAX/TAGS_DISP_MAX
+  no render, lt_pick e carets (fix #25).
+- Criação (Ctrl+N/G) seta creating_sn/coll (índice; -1=nenhum, init único —
+  BSS 0 seria índice válido!); Esc remove e avisa `criacao cancelada`;
+  commit limpa a flag (fix #26). Índices estáveis: nada compacta em edit mode.
+- X11: GC nulo falha o init com cleanup único (fecha display, zera handles);
+  main chama shutdown no .fail (fix #27). Close exige janela+WM_PROTOCOLS+
+  formato 32+DELETE (fix #28). Esc por KeySym 0xFF1B, nunca keycode (fix #29).
+  Selection: property None->target, XA_STRING converte p/ Latin-1 (recusa se
+  irrepresentável), claim/serve com timestamps (fix #30).
+- Alinhamento/ABI (fix #19): na entrada rsp%16==8; antes de cada `call`,
+  reserva líquida (pushes+subs-pops-adds) ≡8 (mod 16), i.e. rsp%16==0.
+  pushes ÍMPARES dispensam sub; pushes PARES exigem `sub rsp,8` (+`add` no
+  epílogo). Toda rotina preserva os callee-saved que usa (rbx,rbp,r12-r15),
+  em TODAS as saídas. Convenção verificada por `roundtrip11_20.py`.
+- Tags com escape (fix #11): internas `a\,b,c` (`\`->`\\`, `,`->`\,`,
+  espaços verbatim, `,,`=tag vazia); `[]` e `[""]` colidem em vazio.
+  Writer divide em vírgulas NÃO-escapadas com flag first-tag (r11d), nunca
+  por comprimento acumulado. Seeds usam `docker,postgres` (sem espaço).
+- Timestamps em ms (fix #18): `now_ms` (clock_gettime) em todo created/
+  updated/exported/at/ids; `itoa` é u64 (buf≥20); `ibuf` tem 40B.
+- Números (fix #14): `parse_u64` rejeita sinal/fração/expoente/continuação
+  alfanumérica e overflow (via `db_parse_err`); `views` rejeita > u32.
+- Chaves raiz (fix #12): `find_key_array` só aceita profundidade 1 (decoys
+  aninhados/strings ignorados). Paths (fix #15): nunca mutar o arg const;
+  rejeitar overlong antes de mudar estado. Temp (fix #16): `<path>.<pid>.tmp`
+  com O_EXCL|O_NOFOLLOW, 0600. Rename com fsync do dir-pai (fix #17).
 
 ## Checklist de review (código novo)
 
@@ -135,5 +204,30 @@
 9. Novo campo persistido: NUL-terminado? emitido nas 12 chaves? `jsoncheck` passa?
 10. Ação destrutiva nova: 2 toques no MESMO alvo? (`arm_kind`)
 11. Mutação nova: chama `db_save`? Testou reabrir o MESMO DB? (F7: favorito sumia)
+    Falha de save restaura (`db_snapshot`/`db_restore`), mantém editor aberto
+    no commit e não duplica versão no retry?
 12. Seed coerente p/ bare run? (ids fixos; `cid` ligado às coleções)
+    IDs novos únicos no mesmo segundo/processo e sem colisão com importados?
 13. Campo 1-linha novo: snapshot no `begin_edit` E restore no `.e_cancel`?
+14. Parse novo: chaves com `key_eq` (sem ler além de `r15`), `\uXXXX` com UTF-8,
+    truncamento marcando `db_lossy` e raiz validada até o `}` final?
+15. Click no título/desc usa UM helper nos dois modos; scroll tem teto
+    max(filt_n-ROWS_VISIBLE,0) + visibilidade (fix #31). rec.inc tem
+    LANG/DESC/TAGS_DISP_MAX + CODE_TOP_Y compartilhados (fix #25) e asserts
+    de offsets derivados (fix #35).
+16. Descrição é 1ª classe (fix #32): busca (strlen), detail em DESC_BASE_Y,
+    modo 7 no ciclo (tab 6->7->2, Enter commita), snapshot/cancel via
+    desc_len+backup, compare no commit. Código começa em CODE_TOP_Y.
+    Mouse (.e_mouse) vale em 1/2/5/6/7 — sem ele, click no código com
+    desc em edição era ignorado e Enter commitava em vez de newline.
+17. UTF-8 (fix #33, sem XIM/Xft — adiado): poll enfileira multibyte validado;
+    edição anda/apaga por sequência nos 16 caminhos; fonte exige largura 9
+    ou o init falha. Sub-rotina local (`call .x`) começa com `sub rsp,8`.
+    utf8_* sujam rax/rcx/rdx: NUNCA reusar esses regs após o call — recarregar
+    tudo (r10/r11/r12-r14 sobrevivem). Cursor andar sem o texto mudar é o
+    sintoma clássico. `desc_len` (BSS) é a célula viva da descrição.
+    Ao salvar regs na pilha p/ um call: consumir rax (retorno) ANTES dos pops,
+    e dar pop em reg MORTO — `pop rcx` após o call apagou min(col,len) e o
+    cursor de click do código foi p/ 2*pos (NUL + `\n` fora do lugar no save).
+18. main despacha só em poll==2 (fix #34); F1 em archive/; expose só com
+    count==0 (fix #36). Portão: `gate.sh` cobre #11-36.

@@ -1,0 +1,35 @@
+{
+ "app": "cmdkeepa",
+ "version": 1,
+ "exportedAt": 1,
+ "snippets": [
+  {
+   "id": "x",
+   "title": "full",
+   "code": "c",
+   "language": "bash",
+   "description": "d",
+   "tags": [
+    "t"
+   ],
+   "collectionId": "c1",
+   "favorite": true,
+   "createdAt": 1720000000000,
+   "updatedAt": 1720000000000,
+   "views": 7,
+   "versions": [
+    {
+     "code": "v",
+     "at": 1720000000000
+    }
+   ]
+  }
+ ],
+ "collections": [
+  {
+   "id": "c1",
+   "name": "N",
+   "createdAt": 1720000000000
+  }
+ ]
+}

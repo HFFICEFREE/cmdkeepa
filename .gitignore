@@ -26,3 +26,7 @@ native/cmdkeepa
 *.njsproj
 *.sln
 *.sw?
+
+# Python (scripts de teste)
+__pycache__/
+*.pyc

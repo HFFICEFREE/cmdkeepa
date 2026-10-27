@@ -1,0 +1,37 @@
+{
+ "app": "cmdkeepa",
+ "version": 1,
+ "exportedAt": 1720000000000,
+ "meta": {
+  "snippets": [
+   {
+    "id": "decoy",
+    "title": "DECOY"
+   }
+  ],
+  "note": "decoy \"snippets\" em string deve ser ignorado"
+ },
+ "snippets": [
+  {
+   "id": "real1",
+   "title": "t",
+   "code": "c",
+   "language": "bash",
+   "description": "",
+   "tags": [
+    "a,b",
+    " c ",
+    "",
+    "q\"x",
+    "b\\c"
+   ],
+   "collectionId": null,
+   "favorite": false,
+   "createdAt": 1720000000000,
+   "updatedAt": 1720000000000,
+   "views": 3,
+   "versions": []
+  }
+ ],
+ "collections": []
+}

@@ -24,8 +24,9 @@ CONTEXTO (armadilhas reais que este script já contorna):
 USO:
   keys.py [-s SHOT] [--wid HEXID] [--send] AÇÃO [AÇÃO ...]
   AÇÕES:
-    CLICK x y [BTN n]   clique (default BTN 1=esq; 4/5=wheel cima/baixo)
-    WHEELUP / WHEELDN   atalhos p/ CLICK 400 400 BTN 4/5
+  CLICK x y [BTN n]   clique (default BTN 1=esq; 4/5=wheel cima/baixo)
+  PRESS x y / MOTION x y / RELEASE x y   arrasto (F4: seleção de texto)
+  WHEELUP / WHEELDN   atalhos p/ CLICK 400 400 BTN 4/5
     CTRL+x              Control+letra (x minúsculo; ex. CTRL+S)
     DELETE TAB ENTER ESC UP DOWN LEFT RIGHT BACKSPACE HOME END
     palavra             cada char vira um KeyPress (só ASCII imprimível)
@@ -135,6 +136,48 @@ def main():
         d.sync()
         time.sleep(CLICK_SLEEP)
 
+    def press(x, y, btn=1):
+        # F4: botão pressionado SEM soltar (início de arrasto p/ seleção)
+        if use_xtest:
+            w.warp_pointer(x, y)
+            d.sync()
+            time.sleep(0.3)
+            xtest.fake_input(d, X.ButtonPress, btn)
+            d.sync()
+            time.sleep(CLICK_SLEEP)
+            return
+        ev = event.ButtonPress(detail=btn, time=X.CurrentTime, root=root,
+                               window=w, child=X.NONE, root_x=x, root_y=y,
+                               event_x=x, event_y=y, state=0, same_screen=1)
+        w.send_event(ev, event_mask=X.ButtonPressMask)
+        d.sync()
+        time.sleep(CLICK_SLEEP)
+
+    def release(x, y, btn=1):
+        # F4: soltura (fim do arrasto; copia a seleção)
+        if use_xtest:
+            w.warp_pointer(x, y)
+            d.sync()
+            time.sleep(0.3)
+            xtest.fake_input(d, X.ButtonRelease, btn)
+            d.sync()
+            time.sleep(CLICK_SLEEP)
+            return
+        ev = event.ButtonRelease(detail=btn, time=X.CurrentTime, root=root,
+                                 window=w, child=X.NONE, root_x=x, root_y=y,
+                                 event_x=x, event_y=y, state=0, same_screen=1)
+        w.send_event(ev, event_mask=X.ButtonReleaseMask)
+        d.sync()
+        time.sleep(CLICK_SLEEP)
+
+    def motion(x, y):
+        # F4: move o ponteiro (estende a seleção com botão pressionado).
+        # Só warp: o servidor gera MotionNotify real já em coords da janela.
+        # (XTest fake_input usa coords da ROOT — deslocaria o ponto final.)
+        w.warp_pointer(x, y)
+        d.sync()
+        time.sleep(0.2)
+
     i, n = 0, 0
     while i < len(actions):
         k = actions[i]
@@ -154,6 +197,31 @@ def main():
             click(400, 400, 4)
         elif k == "WHEELDN":
             click(400, 400, 5)
+        elif k == "DEAD":
+            # F4: tecla morta p/ teste de acentos (default: agudo FE51).
+            # DEAD FE5B = cedilha, DEAD FE53 = til, etc. Requer layout
+            # com dead keys (ex.: us-intl). Compõe com a próxima vogal.
+            sym = 0xFE51
+            if i + 1 < len(actions) and actions[i + 1].startswith("FE"):
+                sym = int(actions[i + 1], 16)
+                i += 1
+            kc = d.keysym_to_keycode(sym)
+            if kc == 0:
+                print("keys.py: AVISO: sem keycode p/ dead %X neste layout" % sym, flush=True)
+            else:
+                keypress(kc)
+        elif k == "PRESS":
+            x, y = int(actions[i + 1]), int(actions[i + 2])
+            press(x, y)
+            i += 2
+        elif k == "RELEASE":
+            x, y = int(actions[i + 1]), int(actions[i + 2])
+            release(x, y)
+            i += 2
+        elif k == "MOTION":
+            x, y = int(actions[i + 1]), int(actions[i + 2])
+            motion(x, y)
+            i += 2
         elif k in SYM:
             keypress(d.keysym_to_keycode(SYM[k]))
         else:
