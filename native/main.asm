@@ -1,6 +1,7 @@
-; main.asm — ponto de entrada do CmdKeepa nativo (F2)
+; main.asm — ponto de entrada do CmdKeepa nativo (F4)
 ; argv[1] opcional = caminho do export JSON; senão ~/.cmdkeepa/db.json.
-; Loop: poll -> 0 nada, 1 sair, 2 tecla (app_on_key + repaint).
+; Loop: poll -> 0 nada, 1 sair (X), 2 evento (app_on_key + repaint;
+; app retorna 1 p/ sair via Esc fora do edit).
 default rel
 
 global main
@@ -38,20 +39,20 @@ main:
     test eax, eax
     jnz .fail
 
-; main.asm — ponto de entrada do CmdKeepa nativo (F4)
-; argv[1] opcional = caminho do export JSON; senão ~/.cmdkeepa/db.json.
-; Loop: poll -> 0 nada, 1 sair (X), 2..21 tecla/mouse (app_on_key + repaint;
-; app retorna 1 p/ sair via Esc fora do edit).
-.loop:
-    call platform_poll wrt ..plt
-    cmp eax, 1
-    je .quit
-    cmp eax, 2                     ; kinds 2..22 = tecla/mouse
-    jb .loop
-    cmp eax, 22
-    ja .loop
+    ; Exibe uma eventual falha preservadora de db_load antes do primeiro evento.
     call app_on_key wrt ..plt
     test eax, eax
+    jnz .quit
+    call platform_paint wrt ..plt
+
+.loop:
+    call platform_poll wrt ..plt      ; 0=nada, 1=sair, 2=evento (kind em ev_kind)
+    cmp eax, 1
+    je .quit
+    cmp eax, 2
+    jne .loop                         ; só 2 despacha (o teto 22 era morto:
+    call app_on_key wrt ..plt         ;  poll retorna 0/1/2; kinds vivem em
+    test eax, eax                     ;  ev_kind, com fallback .cont0 — fix #34)
     jnz .quit
     call platform_paint wrt ..plt
     jmp .loop
@@ -61,6 +62,7 @@ main:
     xor eax, eax
     jmp .done
 .fail:
+    call platform_shutdown wrt ..plt  ; fecha display parcial (fix #27; null-safe)
     mov eax, 1
 .done:
     pop r12
