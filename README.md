@@ -46,17 +46,10 @@ da edição.
 
 ### Banco de dados
 
-O app nativo lê e grava o **mesmo JSON v1** do export web. Ordem de resolução:
-
-1. `./native/cmdkeepa /caminho/db.json` — usa o argumento
-2. senão **`~/.cmdkeepa/db.json`** (o diretório é criado no primeiro save)
-3. sem `$HOME` → `./db.json`
-4. arquivo ausente → só aí entra o seed embutido (gravado no primeiro commit)
-
-Para usar seus dados: exporte do web e copie o JSON para
-`~/.cmdkeepa/db.json` (ou rode o binário apontando para ele). Se um JSON
-existente estiver ilegível, o app **preserva o arquivo** e avisa na tela em
-vez de sobrescrever com o seed.
+Os dados ficam em **`~/.cmdkeepa/db.json`** (mesmo JSON v1 do export web).
+Para apagar todo vestígio do app, basta apagar **`~/.cmdkeepa/`** e a pasta
+deste repositório — o binário e os `.o` são artefatos, nada mais fica fora
+desses dois lugares.
 
 ### Build e release
 
