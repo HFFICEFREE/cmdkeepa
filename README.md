@@ -15,6 +15,34 @@ npm run preview  # serve the build
 
 Deploy `dist/` to any static host (Vercel, Netlify, GitHub Pages, …).
 
+## Atalhos do app nativo
+
+O binário X11 em assembly (`native/cmdkeepa`) é operado por teclado.
+Dentro do app, **`Ctrl+H`** abre esta mesma tabela.
+
+| Tecla | Ação |
+| --- | --- |
+| `↑` / `↓` | Navega na lista (e no seletor de coleção) |
+| `Tab` | Alterna busca → sidebar → lista |
+| `Enter` | Edita o snippet (título → código → tipo → tags → descrição) |
+| `Tab` | Próximo campo durante a edição |
+| `Ctrl+S` | Salva no banco |
+| `Ctrl+N` | Novo snippet |
+| `Ctrl+G` | Nova coleção |
+| `Ctrl+F` | Favorita / desfavorita |
+| `Ctrl+C` | Copia o código |
+| `Ctrl+V` | Cola do clipboard |
+| `Ctrl+X` | Recorta a seleção; com a sidebar focada, apaga a coleção (2×) |
+| `Del` / `Ctrl+D` | Apaga o snippet (2× confirma) |
+| `Ctrl+U` | Limpa a busca |
+| `Ctrl+L` | Move o snippet para uma coleção |
+| `Ctrl+R` | Renomeia a coleção (sidebar) ou atribui o snippet |
+| `Esc` | Cancela / fecha; `Esc` de novo sai do app |
+
+**Mouse:** arrastar no código seleciona (depois use `Ctrl+C`/`Ctrl+X`),
+clicar reposiciona o cursor, e clicar fora da coluna de detalhe salva e sai
+da edição.
+
 ## Features
 
 **Core (MVP)**
