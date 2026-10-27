@@ -37,6 +37,7 @@ Dentro do app, **`Ctrl+H`** abre esta mesma tabela.
 | `Ctrl+U` | Limpa a busca |
 | `Ctrl+L` | Move o snippet para uma coleção |
 | `Ctrl+R` | Renomeia a coleção (sidebar) ou atribui o snippet |
+| `Ctrl+H` | Abre esta tabela de comandos |
 | `Esc` | Cancela / fecha; `Esc` de novo sai do app |
 
 **Mouse:** arrastar no código seleciona (depois use `Ctrl+C`/`Ctrl+X`),
