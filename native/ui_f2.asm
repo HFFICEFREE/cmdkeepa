@@ -6,6 +6,59 @@ default rel
 
 global ui_draw
 global app_on_key
+; API de teste headless (harness error-utils/uitest.c; sem X11): fluxos de
+; edição/commit/cancel e helpers de linha. Aditiva — não muda o app.
+global edit_commit_save
+global coll_commit_save
+global coll_cancel
+global begin_edit
+global lt_pick
+global linelen
+global line_start
+global line_index
+global prev_start
+global col_of_cursor
+global filter_rebuild
+global edit_mode
+global edit_rec
+global edit_backup
+global backup_len
+global edit_cursor
+global edit_goal
+global title_backup
+global title_blen
+global title_cursor
+global lang_backup
+global lang_blen
+global lang_cursor
+global tags_backup
+global tags_blen
+global tags_cursor
+global desc_len
+global desc_backup
+global desc_blen
+global desc_cursor
+global coll_backup
+global coll_blen
+global coll_cursor
+global creating_sn
+global creating_coll
+global code_scroll
+global sel
+global scroll
+global filt_n
+global filt_idx
+global qlen
+global libsel
+global match_rec
+global qbuf
+global utf8_step_back
+global utf8_step_fwd
+global fld_insert
+global fld_backspace
+global fld_delfwd
+global fld_left
+global fld_right
 
 extern platform_fill_rect
 extern platform_draw_text
@@ -17,7 +70,19 @@ extern ev_mx
 extern ev_my
 extern clip_ptr
 extern clip_len
+extern clip_buf
+extern paste_buf
+extern paste_len
+extern platform_request_paste
+extern dead_pending
 extern db_save
+extern db_error
+extern db_readonly
+extern db_snapshot
+extern db_restore
+extern j_memeq
+extern strlen_cap
+extern now_ms
 extern sn_recs
 extern sn_count
 extern coll_names
@@ -26,15 +91,16 @@ extern coll_count
 extern coll_ids
 extern coll_cats
 
-%define C_BG     0x191817
-%define C_PANEL  0x201E1C
-%define C_SEL    0x2E2A27
-%define C_BOX    0x2A2724
-%define C_BORDER 0x332F2B
+%define C_BG     0x161513
+%define C_PANEL  0x1E1C1A
+%define C_SEL    0x3A4534
+%define C_BOX    0x1C1B19
+%define C_BORDER 0x2E2A27
 %define C_TEXT   0xECE7DF
 %define C_DIM    0xA8A29E
-%define C_ACCENT 0xE0AF68
+%define C_ACCENT 0xC9D2C2
 %define C_CODE   0xD6D0C7
+%define C_ACCENT_DIM 0x55644F
 
 %macro FILL 5
     mov edi, %1
@@ -65,17 +131,14 @@ extern coll_cats
 %endmacro
 
 section .data
-    t_title:   db "CmdKeepa"
-t_title_len equ $ - t_title
-    ; única dica permanente: Ctrl+H abre a tabela (nada de ensinar teclas na UI)
-    t_helpkey: db "Ctrl+H ajuda"
-t_helpkey_len equ $ - t_helpkey
     t_helptitle: db "Comandos"
 t_helptitle_len equ $ - t_helptitle
     t_helpclose: db "Esc / Ctrl+H fecha"
 t_helpclose_len equ $ - t_helpclose
     hk_up:      db "Up / Down", 0
     hd_up:      db "navega na lista (e no seletor de colecao)", 0
+    hk_tab2:     db "Tab", 0
+    hd_tab2:     db "alterna busca > sidebar > lista", 0
     hk_enter:   db "Enter", 0
     hd_enter:   db "edita o snippet (titulo -> codigo -> tipo -> tags)", 0
     hk_tab:     db "Tab", 0
@@ -88,6 +151,8 @@ t_helpclose_len equ $ - t_helpclose
     hd_fav:     db "favoritar / desfavoritar", 0
     hk_copy:    db "Ctrl+C", 0
     hd_copy:    db "copia o codigo", 0
+    hk_paste:   db "Ctrl+V", 0
+    hd_paste:   db "cola do clipboard", 0
     hk_clear:   db "Ctrl+U", 0
     hd_clear:   db "limpa a busca", 0
     hk_move:    db "Ctrl+L", 0
@@ -95,9 +160,9 @@ t_helpclose_len equ $ - t_helpclose
     hk_newc:    db "Ctrl+G", 0
     hd_newc:    db "nova colecao", 0
     hk_renc:    db "Ctrl+R", 0
-    hd_renc:    db "renomeia a colecao OU atribui o snippet (picker)", 0
+    hd_renc:    db "renomeia (sidebar) ou atribui o snippet", 0
     hk_delc:    db "Ctrl+X", 0
-    hd_delc:    db "apaga a colecao (2x confirma)", 0
+    hd_delc:    db "recorta selecao; sidebar: apaga colecao (2x)", 0
     hk_del:     db "Del / Ctrl+D", 0
     hd_del:     db "apaga o snippet (2x confirma)", 0
     hk_help:    db "Ctrl+H", 0
@@ -107,12 +172,14 @@ t_helpclose_len equ $ - t_helpclose
     ; pares (ptr_chave, ptr_desc), NUL-terminadas
     help_rows:
         dq hk_up, hd_up
+        dq hk_tab2, hd_tab2
         dq hk_enter, hd_enter
         dq hk_tab, hd_tab
         dq hk_save, hd_save
         dq hk_new, hd_new
         dq hk_fav, hd_fav
         dq hk_copy, hd_copy
+        dq hk_paste, hd_paste
         dq hk_clear, hd_clear
         dq hk_move, hd_move
         dq hk_newc, hd_newc
@@ -146,8 +213,15 @@ t_c3_len equ $ - t_c3
 t_search_len equ $ - t_search
     t_sep:     db " - "
 t_sep_len equ $ - t_sep
+    t_desc:    db "desc: "
+t_desc_len equ $ - t_desc
     t_nomatch: db "No matches"
 t_nomatch_len equ $ - t_nomatch
+    ; dicas contextuais do estado vazio, centralizadas na coluna (241..600):
+    t_emptyclear: db "Ctrl+U limpa a busca"
+t_emptyclear_len equ $ - t_emptyclear   ; 20ch -> x330
+    t_emptynew: db "Ctrl+N novo snippet"
+t_emptynew_len equ $ - t_emptynew       ; 19ch -> x334
     t_favtag:  db " - fav"
 t_favtag_len equ $ - t_favtag
     t_star:    db "*"
@@ -158,16 +232,38 @@ m_copied_len equ $ - m_copied
 m_busy_len equ $ - m_busy
     m_nothing: db "nada p/ copiar"
 m_nothing_len equ $ - m_nothing
+    m_pasted:  db "colado: "
+m_pasted_len equ $ - m_pasted
+    m_pempty:  db "nada p/ colar"
+m_pempty_len equ $ - m_pempty
+    m_cut:     db "recortado: "
+m_cut_len equ $ - m_cut
     m_saved:   db "salvo "
 m_saved_len equ $ - m_saved
     m_fail:    db "falha ao salvar"
 m_fail_len equ $ - m_fail
+    m_dberr1:  db "db ilegivel na abertura: original preservado (somente leitura)"
+m_dberr1_len equ $ - m_dberr1
+    m_dberr2:  db "db ilegivel na leitura: original preservado (somente leitura)"
+m_dberr2_len equ $ - m_dberr2
+    m_dberr3:  db "db excede 1 MiB: original preservado (somente leitura)"
+m_dberr3_len equ $ - m_dberr3
+    m_dberr4:  db "db com JSON invalido: original preservado (somente leitura)"
+m_dberr4_len equ $ - m_dberr4
+    m_dberr5:  db "db excede limites nativos: original preservado (somente leitura)"
+m_dberr5_len equ $ - m_dberr5
+    m_dberr6:  db "save inicial falhou: seed em memoria (somente leitura)"
+m_dberr6_len equ $ - m_dberr6
     m_favon:   db "fav: "
 m_favon_len equ $ - m_favon
     m_favoff:  db "unfav: "
 m_favoff_len equ $ - m_favoff
     m_cancel:  db "edicao cancelada"
 m_cancel_len equ $ - m_cancel
+    m_unmade:  db "criacao cancelada"
+m_unmade_len equ $ - m_unmade
+    m_nochange: db "sem alteracoes"
+m_nochange_len equ $ - m_nochange
     m_full:    db "limite 4KB"
 m_full_len equ $ - m_full
     m_maxsn:   db "limite 64 snippets"
@@ -206,6 +302,10 @@ m_unfiled2_len equ $ - m_unfiled2
 m_nocolls_len equ $ - m_nocolls
     t_picktag: db "[MOVER]"
 t_picktag_len equ $ - t_picktag
+    t_movehint: db "Up/Down escolhe a colecao - Enter confirma - Esc cancela"
+t_movehint_len equ $ - t_movehint   ; picker via Ctrl+L (setas)
+    t_movehint_mouse: db "clique na colecao destino - Esc cancela"
+t_movehint_mouse_len equ $ - t_movehint_mouse ; picker via Ctrl+R (mouse)
     t_plain:   db "plaintext"
 t_plain_len equ $ - t_plain
     ; tabela de tipos p/ o seletor Up/Down no campo language (slots fixos de
@@ -260,7 +360,7 @@ section .bss
     scroll:   resq 1
     filt_idx: resb MAX_SNIPPETS
     filt_n:   resq 1
-    ibuf:     resb 24
+    ibuf:     resb 40             ; ids "n-<ms>-<pid>-<seq>" (ms=13 dígitos)
     msg_buf:  resb 128
     msg_len:  resq 1
     edit_mode: resq 1            ; 0=normal, 1=editando código, 2=título, 3=nome de coleção
@@ -279,6 +379,10 @@ section .bss
     tags_cursor: resq 1         ; índice em tags "a, b" (modo 6)
     tags_backup: resb REC_TAGS_LEN
     tags_blen: resq 1
+    desc_len: resd 1              ; len viva da descrição (sem célula no rec #32)
+    desc_blen: resq 1
+    desc_backup: resb REC_DESC_LEN
+    desc_cursor: resq 1           ; índice na descrição (modo 7)
     fld_char: resb 1            ; char pendente p/ inserção em campo 1-linha
     click_col: resq 1           ; coluna calculada do click (lang/tags)
     q_focus: resq 1             ; 1 = busca com foco (borda+caret, Esc sai)
@@ -298,19 +402,96 @@ section .bss
     mv_k: resq 1                ; índice destino do assign (-1 = unfiled)
     pick_sel: resq 1            ; cursor do seletor (0=unfiled, 1+k=coll k)
     pick_rec: resq 1            ; rec alvo do seletor (estável: sem mutação no modo 4)
+    edit_rec: resq 1            ; rec fixo durante edição 1/2/5/6 (não segue o filtro)
+    creating_sn: resq 1         ; índice do snippet em criação, -1 = nenhum (#26)
+    creating_coll: resq 1       ; índice da coleção em criação, -1 = nenhuma (#26)
+    ui_init_done: resq 1        ; 1 = BSS de criação já inicializado p/ -1
+    boot_err_done: resq 1       ; 1 = mensagem de db_load ilegível já exibida
+    id_seq: resq 1              ; contador para IDs únicos dentro do processo
+    id_tmp: resb 64             ; candidato a ID antes da checagem de colisão
+    sel_active: resq 1         ; 1 = arrasto de seleção no código (F4)
+    btn_down: resq 1           ; 1 = botão 1 pressionado (motion só vale em arrasto)
+    sel_a: resq 1              ; âncora (offset absoluto no code)
+    sel_b: resq 1              ; ponta viva (offset absoluto no code)
+    sel_rec: resq 1            ; rec da seleção (só rende/lê nele)
+    sel_o1: resd 1             ; tmp de render: início clampado na linha
+    sel_o2: resd 1             ; tmp de render: fim clampado na linha
+    side_focus: resq 1        ; 1 = sidebar com foco de teclado (Tab; setas movem libsel)
+    pick_mouse: resq 1        ; 1 = seletor aberto via Ctrl+R (hint de mouse)
 
 section .text
 
 ; ---------- entrada ----------
 
 ; int app_on_key(void) — eax 1 = sair, 0 = continuar
+; Preserva rbx,r12-r15 (callee-saved, fix #19): usa rbx (rec) e r12 (contadores)
+; em todos os handlers. 6 pushes (par) + sub 8: entrada rsp%16==8 -> 0, calls ok.
 app_on_key:
     push rbp
     mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 8
     ; mensagens do canto inferior direito valem SÓ para o evento atual: ao
     ; "resetar" um estado (Esc armado, Del armado, edição), o texto de ajuda
     ; não pode ficar órfão na tela. Handlers que querem avisar re-setam abaixo.
+    ; Exceção (F4): no modo mover (4) a orientação persiste enquanto o modo
+    ; durar — commit/cancel sobrescrevem a msg na saída.
+    cmp qword [edit_mode], 4
+    je .msgkeep
     mov qword [msg_len], 0
+.msgkeep:
+    cmp qword [boot_err_done], 0
+    jne .bootshown
+    mov rax, [db_error]
+    test rax, rax
+    jz .bootshown
+    cmp rax, 1
+    je .berr1
+    cmp rax, 2
+    je .berr2
+    cmp rax, 3
+    je .berr3
+    cmp rax, 4
+    je .berr4
+    cmp rax, 5
+    je .berr5
+    lea rsi, [m_dberr6]
+    mov edx, m_dberr6_len
+    jmp .berrshow
+.berr1:
+    lea rsi, [m_dberr1]
+    mov edx, m_dberr1_len
+    jmp .berrshow
+.berr2:
+    lea rsi, [m_dberr2]
+    mov edx, m_dberr2_len
+    jmp .berrshow
+.berr3:
+    lea rsi, [m_dberr3]
+    mov edx, m_dberr3_len
+    jmp .berrshow
+.berr4:
+    lea rsi, [m_dberr4]
+    mov edx, m_dberr4_len
+    jmp .berrshow
+.berr5:
+    lea rsi, [m_dberr5]
+    mov edx, m_dberr5_len
+.berrshow:
+    call set_msg
+    mov qword [boot_err_done], 1
+.bootshown:
+    ; BSS nasce zerado mas "nenhuma criação" é -1 (0 = índice válido!): init único
+    cmp qword [ui_init_done], 0
+    jne .inited
+    mov qword [creating_sn], -1
+    mov qword [creating_coll], -1
+    mov qword [ui_init_done], 1
+.inited:
     ; confirmação de apagar expira em QUALQUER evento que não seja delete
     ; (15/16 = snippet via Del/Ctrl+D, 20 = coleção via Ctrl+X). Assim o 2o
     ; toque precisa ser imediato e no mesmo alvo.
@@ -328,6 +509,28 @@ app_on_key:
     je .esckeep
     mov qword [esc_armed], 0
 .esckeep:
+    ; seleção do mouse (F4): navegação (setas/Esc) limpa; edição, cópia,
+    ; cola, press/release/motion preservam — o handler consome ou limpa.
+    cmp eax, 3
+    je .selclr
+    cmp eax, 4
+    je .selclr
+    cmp eax, 10
+    je .selclr
+    cmp eax, 11
+    je .selclr
+    cmp eax, 12
+    je .selclr
+    jmp .selkeep
+.selclr:
+    mov qword [sel_active], 0
+.selkeep:
+    ; tecla morta pendente (F4): só uma imprimível (kind 1) a consome;
+    ; qualquer outra ação (seta, Esc, clique etc.) a descarta.
+    cmp eax, 1
+    je .deadkeep
+    mov dword [dead_pending], 0
+.deadkeep:
     ; tabela de comandos (Ctrl+H): enquanto aberta, só fecha (Esc/Ctrl+H/clique)
     cmp qword [help_open], 0
     je .help_closed
@@ -355,6 +558,31 @@ app_on_key:
     mov qword [esc_armed], 0
     jmp .ret
 .help_noopen:
+    mov eax, [ev_kind]
+    cmp eax, 23
+    je .release
+    cmp eax, 24
+    je .motion
+    cmp eax, 25
+    je .paste_ready
+    ; clique fora da coluna de detalhe (sidebar ou lista) encerra a edição:
+    ; comita (não perde o que foi digitado) e segue o fluxo normal de clique,
+    ; que seleciona o item clicado. Se o save falhar, permanece editando.
+    ; O seletor de coleção (modo 4) fica de fora: clicar na sidebar é como se
+    ; escolhe a coleção.
+    cmp qword [edit_mode], 0
+    je .not_outside
+    cmp qword [edit_mode], 4
+    je .not_outside
+    cmp dword [ev_kind], 13
+    jne .not_outside
+    cmp dword [ev_mx], 601
+    jae .not_outside
+    call leave_edit_commit
+    cmp qword [edit_mode], 0
+    jne .ret
+    jmp .mouse
+.not_outside:
     cmp qword [edit_mode], 0
     jne .edit
     mov eax, [ev_kind]
@@ -368,6 +596,8 @@ app_on_key:
     je .down
     cmp eax, 5
     je .copy
+    cmp eax, 26
+    je .paste_req
     cmp eax, 6
     je .save
     cmp eax, 7
@@ -386,6 +616,8 @@ app_on_key:
     je .del
     cmp eax, 16
     je .del
+    cmp eax, 17
+    je .tabfocus
     cmp eax, 18
     je .mkcoll
     cmp eax, 19
@@ -394,9 +626,14 @@ app_on_key:
     je .delcoll
     cmp eax, 21
     je .movecoll
+    cmp eax, 23
+    je .release
+    cmp eax, 24
+    je .motion
     jmp .cont0
 .print:
     mov qword [q_focus], 1          ; digitar mantém a busca focada (caret visível)
+    mov qword [side_focus], 0       ; digitar volta o foco p/ busca+lista
     mov rax, [qlen]
     cmp rax, QUERY_MAX
     jae .ret
@@ -408,6 +645,7 @@ app_on_key:
     mov qword [scroll], 0
     jmp .ret
 .back:
+    mov qword [side_focus], 0
     mov rax, [qlen]
     test rax, rax
     jz .ret
@@ -417,18 +655,61 @@ app_on_key:
     mov qword [scroll], 0
     jmp .ret
 .up:
+    cmp qword [side_focus], 0
+    jne .up_side
     mov rax, [sel]
     test rax, rax
     jz .ret
     dec rax
     mov [sel], rax
     jmp .ret
+.up_side:
+    mov rax, [libsel]
+    test rax, rax
+    jz .ret
+    dec rax
+    mov [libsel], rax
+    mov qword [sel], 0
+    mov qword [scroll], 0
+    jmp .ret
 .down:
+    cmp qword [side_focus], 0
+    jne .down_side
     mov rax, [sel]
     inc rax
     mov [sel], rax
     jmp .ret
+.down_side:
+    mov rax, [libsel]
+    mov rdx, [coll_count]
+    add rdx, 2                        ; teto: 0=all,1=fav,2=unfiled,3+=colls
+    cmp rax, rdx
+    jae .ret
+    inc rax
+    mov [libsel], rax
+    mov qword [sel], 0
+    mov qword [scroll], 0
+    jmp .ret
+.tabfocus:
+    ; Tab alterna o foco: lista -> busca -> sidebar -> lista ...
+    cmp qword [q_focus], 0
+    je .tab_list
+    mov qword [q_focus], 0
+    mov qword [side_focus], 1
+    mov qword [sel], 0
+    mov qword [scroll], 0
+    jmp .ret
+.tab_list:
+    cmp qword [side_focus], 0
+    je .tab_search
+    mov qword [side_focus], 0
+    jmp .ret
+.tab_search:
+    mov qword [q_focus], 1
+    mov qword [sel], 0
+    jmp .ret
 .clearq:
+    mov qword [side_focus], 0
     mov qword [qlen], 0
     mov qword [sel], 0
     mov qword [scroll], 0
@@ -441,14 +722,45 @@ app_on_key:
     call set_msg
     jmp .ret
 .hascopy:
-    mov rax, [sel]
-    movzx eax, byte [filt_idx+rax]
-    imul eax, eax, REC_SIZE
-    lea rbx, [sn_recs+rax]
-    lea rax, [rbx+REC_CODE_OFF]
-    mov [clip_ptr], rax
+    call resolve_rec
+    test eax, eax
+    jz .copynone
+    ; seleção ativa no código? copia o trecho (não o código inteiro)
+    cmp qword [edit_mode], 1
+    jne .copywhole
+    cmp qword [sel_active], 0
+    je .copywhole
+    cmp rbx, [sel_rec]
+    jne .copywhole
+    call sel_copy
+    cmp eax, 0
+    jg .copysel
+    jl .copybusy
+    jmp .copywhole
+.copysel:
+    lea rsi, [m_copied]
+    mov edx, m_copied_len
+    call set_msg
+    mov eax, [clip_len]
+    lea rdi, [ibuf]
+    call itoa                       ; "copiado: N" como feedback
+    lea rsi, [ibuf]
+    mov edx, eax
+    call append_msg
+    jmp .ret
+.copywhole:
     mov eax, [rbx+REC_CLEN_OFF]
+    cmp eax, REC_CODE_LEN - 1
+    jbe .copyok
+    mov eax, REC_CODE_LEN - 1
+.copyok:
     mov [clip_len], eax
+    lea rsi, [rbx+REC_CODE_OFF]
+    lea rdi, [clip_buf]
+    mov ecx, eax
+    rep movsb
+    lea rax, [clip_buf]
+    mov [clip_ptr], rax
     call platform_claim_clipboard wrt ..plt
     test eax, eax
     jz .copybusy
@@ -462,6 +774,11 @@ app_on_key:
     mov edx, m_busy_len
     call set_msg
     jmp .ret
+.copynone:
+    lea rsi, [m_nothing]
+    mov edx, m_nothing_len
+    call set_msg
+    jmp .ret
 .save:
     call do_save
     jmp .ret
@@ -472,6 +789,7 @@ app_on_key:
     movzx eax, byte [filt_idx+rax]
     imul eax, eax, REC_SIZE
     lea rbx, [sn_recs+rax]
+    call db_snapshot wrt ..plt
     xor byte [rbx+REC_FAV_OFF], 1
     ; persiste na hora: favoritar é mutação de DB (antes ficava só em memória
     ; e sumia ao fechar — mesmo buraco do sidecar, mas por handler)
@@ -492,6 +810,7 @@ app_on_key:
     call append_title
     jmp .ret
 .favfail:
+    call db_restore wrt ..plt
     lea rsi, [m_fail]
     mov edx, m_fail_len
     call set_msg
@@ -509,6 +828,7 @@ app_on_key:
     cmp qword [esc_armed], 0
     jne .quitapp
     mov qword [q_focus], 0
+    mov qword [side_focus], 0
     mov qword [esc_armed], 1
     lea rsi, [m_blur]
     mov edx, m_blur_len
@@ -517,8 +837,65 @@ app_on_key:
 .quitapp:
     mov qword [esc_armed], 0
     mov eax, 1
+    add rsp, 8
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
     pop rbp
     ret
+; .release/.motion (F4): soltura ancora a seleção (sem copiar) e motion
+; estende — a cópia/recorte/apagar vêm depois, por tecla (Ctrl+C / Ctrl+X /
+; Backspace/Delete). Válidos em qualquer modo de edição do código; ignorados
+; sem arrasto ativo ou sem botão pressionado (hover não estende).
+; Preservam rbx (chamador ui_draw depende disso via .ret).
+.release:
+    mov qword [btn_down], 0
+    cmp qword [sel_active], 0
+    je .ret
+    call click_to_cursor            ; cursor = ponto de soltura
+    mov rax, [edit_cursor]
+    mov [sel_b], rax
+    call resolve_rec
+    test eax, eax
+    jz .ret
+    mov rax, [sel_a]
+    cmp rax, [sel_b]
+    jne .ret                        ; mantém a seleção p/ Ctrl+C/X/Del
+    mov qword [sel_active], 0       ; clique simples (sem arrasto): sem seleção
+    jmp .ret
+.motion:
+    cmp qword [btn_down], 0
+    je .ret                         ; hover (sem botão): não estende
+    cmp qword [sel_active], 0
+    je .ret
+    call click_to_cursor            ; cursor segue o arrasto
+    mov rax, [edit_cursor]
+    mov [sel_b], rax
+    jmp .ret
+; .paste_req (kind 26 = Ctrl+V): pede o CLIPBOARD ao platform; se os bytes já
+; estão prontos insere na hora, se vieram de fora o kind 25 insere ao chegar.
+.paste_req:
+    call platform_request_paste wrt ..plt
+    cmp eax, 0
+    jg .paste_got
+    je .paste_empty
+    jmp .ret                        ; -1: pedido enviado; 25 insere depois
+.paste_empty:
+    lea rsi, [m_pempty]
+    mov edx, m_pempty_len
+    call set_msg
+    jmp .ret
+.paste_got:
+    call paste_insert
+    jmp .ret
+; .paste_ready (kind 25): o dono externo respondeu; insere no alvo atual.
+.paste_ready:
+    cmp dword [paste_len], 0
+    je .ret
+    call paste_insert
+    jmp .ret
 .mouse:
     mov eax, [ev_btn]
     cmp eax, 4
@@ -527,6 +904,9 @@ app_on_key:
     je .m_wheeldown
     cmp eax, 1
     jne .ret
+    mov qword [btn_down], 1       ; arrasto: motion passa a estender
+    mov qword [sel_active], 0       ; novo clique cancela arrasto anterior
+    mov qword [side_focus], 0       ; foco volta p/ lista/busca (sidebar reativa)
     mov qword [q_focus], 0          ; clique fora da busca tira o foco
     mov eax, [ev_mx]
     mov ecx, [ev_my]
@@ -534,10 +914,10 @@ app_on_key:
     jb .m_side
     cmp eax, 601
     jae .m_detail
-    ; faixa central: caixa de busca (y<90) ou lista
-    cmp ecx, 90
+    ; faixa central: caixa de busca (y<84) ou lista (linhas a partir de 84)
+    cmp ecx, 84
     jb .m_searchfocus
-    sub ecx, 90
+    sub ecx, 84
     mov eax, ecx
     mov ebx, 58
     xor edx, edx
@@ -596,6 +976,7 @@ app_on_key:
     div ebx
     add rax, 3
     mov [libsel], rax
+    mov qword [side_focus], 1       ; clique na sidebar foca o painel
     mov qword [sel], 0
     mov qword [scroll], 0
     jmp .ret
@@ -606,23 +987,44 @@ app_on_key:
     xor edx, edx
     div ebx                         ; 0=all 1=fav 2=unfiled
     mov [libsel], rax
+    mov qword [side_focus], 1       ; clique na sidebar foca o painel
     mov qword [sel], 0
     mov qword [scroll], 0
     jmp .ret
 .m_detail:
     cmp qword [filt_n], 0
     je .ret
-    cmp ecx, 60
+    cmp ecx, 77
     jb .ret
-    cmp ecx, 86
+    cmp ecx, 103
     jb .m_title
-    cmp ecx, 110
+    cmp ecx, 127
     jb .m_langtags
+    cmp ecx, 159
+    jb .m_desc                        ; linha da descrição (fix #32)
     mov edi, 1
     call begin_edit
     test eax, eax
     jz .ret
+    ; detail somente-leitura sempre rende da linha 0; begin_edit rola p/ o fim
+    ; (ensure_vis no cursor=end). Zerar o scroll aqui faz o clique mapear contra
+    ; o que o usuário VIU — sem isso, snippet longo saltava e selecionava outra
+    ; linha (clique na 28 virava 39).
+    mov qword [code_scroll], 0
     call click_to_cursor
+    mov rax, [edit_cursor]          ; F4: ancora o arrasto de seleção
+    mov [sel_a], rax
+    mov [sel_b], rax
+    mov rax, [edit_rec]
+    mov [sel_rec], rax
+    mov qword [sel_active], 1
+    jmp .ret
+.m_desc:
+    mov edi, 7
+    call begin_edit
+    test eax, eax
+    jz .ret
+    call desc_click_to_cursor
     jmp .ret
 .m_langtags:
     ; linha "lang - tags": escolhe o campo e a coluna pelo x do click
@@ -647,36 +1049,16 @@ app_on_key:
     call begin_edit
     test eax, eax
     jz .ret
-    ; title_cursor pela coluna do click
-    mov eax, [ev_mx]
-    sub eax, 621
-    jge .m_txok
-    xor eax, eax
-.m_txok:
-    mov ecx, 9
-    xor edx, edx
-    div ecx                         ; eax = col
-    mov r11d, eax                   ; salva (cur_rec retorna em eax)
-    call cur_rec
-    test eax, eax
-    jz .ret
-    mov eax, r11d
-    mov ecx, [rbx+REC_TLEN_OFF]
-    cmp eax, ecx
-    cmova eax, ecx
-    mov [title_cursor], rax
+    call title_click_to_cursor
     jmp .ret
 .mknew:
-    mov eax, 201                    ; sys_time (clobber rcx,r11 — livres)
-    xor edi, edi
-    syscall
-    mov r10, rax                    ; epoch
+    call now_ms wrt ..plt             ; ms Unix (fix #18, par do Date.now)
+    mov r10, rax                    ; epoch-ms
     mov rax, [sn_count]
     cmp rax, MAX_SNIPPETS
     jae .m_maxmsg
-    mov eax, r10d
     lea rdi, [ibuf]
-    call itoa                        ; clobber rbx! rbx recalculado abaixo
+    call make_sn_id
     mov r11d, eax                   ; idlen
     mov rax, [sn_count]
     imul eax, eax, REC_SIZE
@@ -687,16 +1069,17 @@ app_on_key:
     rep stosb
     ; language nasce VAZIA: no modo 5 o user digita (bash, jq...) ou usa
     ; Up/Down; ao commitar, vazio vira "plaintext" (default do web)
-    mov byte [rbx+REC_ID_OFF], 'n'
-    mov byte [rbx+REC_ID_OFF+1], '-'
     lea rsi, [ibuf]
-    lea rdi, [rbx+REC_ID_OFF+2]
+    lea rdi, [rbx+REC_ID_OFF]
     mov ecx, r11d
     rep movsb
     mov byte [rdi], 0
     mov [rbx+REC_CREATED_OFF], r10
     mov [rbx+REC_UPDATED_OFF], r10
     inc qword [sn_count]
+    mov rax, [sn_count]
+    dec rax
+    mov [creating_sn], rax            ; em criação até commit/Esc (fix #26)
     mov qword [qlen], 0
     mov qword [libsel], 0
     ; filtro estava velho (7 recs): rebuild ANTES de begin_edit, senão
@@ -747,6 +1130,7 @@ app_on_key:
     call append_msg
     jmp .ret
 .del_do:
+    call db_snapshot wrt ..plt
     mov ecx, [rbx+REC_TLEN_OFF]
     cmp ecx, 40
     jbe .dlok
@@ -775,6 +1159,7 @@ app_on_key:
 .dnomove:
     dec qword [sn_count]
     mov qword [edit_mode], 0
+    mov qword [sel_active], 0       ; rec sumiu: anchors inválidos
     call db_save wrt ..plt          ; rax=n ou -1
     cmp rax, 0
     jl .dfail
@@ -786,6 +1171,8 @@ app_on_key:
     call append_msg
     jmp .ret
 .dfail:
+    call db_restore wrt ..plt
+    call filter_rebuild
     lea rsi, [m_fail]
     mov edx, m_fail_len
     call set_msg
@@ -794,14 +1181,12 @@ app_on_key:
     mov rax, [coll_count]
     cmp rax, MAX_COLLS
     jae .m_cmax
-    mov eax, 201                    ; sys_time (clobber rcx,r11 — livres)
-    xor edi, edi
-    syscall
-    mov r10, rax                    ; epoch
+    call now_ms wrt ..plt             ; ms Unix (fix #18)
+    mov r10, rax                    ; epoch-ms
     mov rax, [coll_count]
     cmp rax, MAX_COLLS
     jae .m_cmax
-    mov r11d, eax                   ; k (sobrevive a itoa: usa r8/r9/rbx)
+    mov r11d, eax                   ; k (make_coll_id preserva r11)
     imul eax, eax, COLL_NAME_LEN
     lea rdi, [coll_names+rax]
     lea rsi, [t_cnew]
@@ -809,21 +1194,17 @@ app_on_key:
     rep movsb
     mov byte [rdi], 0
     mov dword [coll_lens+r11*4], t_cnew_len
-    imul eax, r11d, COLL_ID_LEN
-    lea rdi, [coll_ids+rax]
-    mov byte [rdi], 'c'
-    mov byte [rdi+1], '-'
-    mov eax, r10d
     lea rdi, [ibuf]
-    call itoa
+    call make_coll_id
     mov ecx, eax
     lea rsi, [ibuf]
     imul eax, r11d, COLL_ID_LEN
-    lea rdi, [coll_ids+rax+2]
+    lea rdi, [coll_ids+rax]
     rep movsb
     mov byte [rdi], 0
     mov [coll_cats+r11*8], r10
     inc qword [coll_count]
+    mov [creating_coll], r11          ; em criação até commit/Esc (fix #26)
     mov qword [qlen], 0
     mov qword [sel], 0
     mov qword [scroll], 0
@@ -832,6 +1213,7 @@ app_on_key:
     mov [libsel], rax
     call coll_snapshot              ; cursor=fim; filtro nem existia p/ ela
     mov qword [edit_mode], 3
+    mov qword [side_focus], 0 ; edição de coleção cancela foco sidebar
     lea rsi, [m_collnew]
     mov edx, m_collnew_len
     call set_msg
@@ -842,22 +1224,30 @@ app_on_key:
     call set_msg
     jmp .ret
 .rencoll:
-    ; Ctrl+R é contextual: com coleção selecionada renomeia; com snippet
-    ; selecionado abre o seletor de coleção (mesmo caminho do Ctrl+L), que é
-    ; o que o usuário espera ("relacionar este snippet com uma coleção").
+    ; Ctrl+R respeita o foco: sidebar focada (Tab) + coleção = renomeia;
+    ; senão abre o seletor de coleção p/ o snippet (hint de mouse).
+    cmp qword [side_focus], 0
+    je .mv_via_mouse
     cmp qword [libsel], 3
-    jb .movecoll
+    jb .mv_via_mouse
     call coll_snapshot
     test eax, eax
     jz .renone
     mov qword [edit_mode], 3
+    mov qword [side_focus], 0 ; edição de coleção cancela foco sidebar
     jmp .ret
+.mv_via_mouse:
+    mov qword [pick_mouse], 1
+    jmp .mv_body
 .renone:
     lea rsi, [m_nocoll]
     mov edx, m_nocoll_len
     call set_msg
     jmp .ret
 .delcoll:
+    ; Ctrl+X idem: só apaga coleção com a sidebar focada (Tab). Senão, avisa.
+    cmp qword [side_focus], 0
+    je .dclnone
     mov eax, [libsel]
     sub eax, 3
     jb .dclnone
@@ -890,6 +1280,7 @@ app_on_key:
     call append_msg
     jmp .ret
 .dcl_do:
+    call db_snapshot wrt ..plt
     mov r10, [arm_idx]              ; k (scratch não sobrevive a set_msg/append)
     imul eax, r10d, COLL_NAME_LEN
     lea rsi, [coll_names+rax]
@@ -977,6 +1368,8 @@ app_on_key:
     call append_msg
     jmp .ret
 .dclfail:
+    call db_restore wrt ..plt
+    call filter_rebuild
     lea rsi, [m_fail]
     mov edx, m_fail_len
     call set_msg
@@ -990,6 +1383,8 @@ app_on_key:
 ; pick_sel inicia na coleção atual (0=unfiled). rbx=rec sobrevive a
 ; db_save (callee-saved); k destino vai p/ mv_k (r11 morre no syscall).
 .movecoll:
+    mov qword [pick_mouse], 0     ; Ctrl+L = picker via setas
+.mv_body:
     cmp qword [filt_n], 0
     jne .mv_hasrec
     lea rsi, [m_norec]
@@ -1036,7 +1431,17 @@ app_on_key:
     mov [pick_sel], rax
     mov [pick_rec], rbx
     mov qword [edit_mode], 4
-    mov qword [msg_len], 0          ; hint fica só no topbar ([MOVER])
+    mov qword [side_focus], 0 ; edição de coleção cancela foco sidebar
+    cmp qword [pick_mouse], 0  ; hint conforme a entrada (setas x mouse)
+    je .mv_hintkeys
+    lea rsi, [t_movehint_mouse]
+    mov edx, t_movehint_mouse_len
+    jmp .mv_hintset
+.mv_hintkeys:
+    lea rsi, [t_movehint]     ; orientação no canto inferior direito (slot de hints)
+    mov edx, t_movehint_len
+.mv_hintset:
+    call set_msg
     jmp .ret
 .mvnone:
     lea rsi, [m_nocolls]
@@ -1056,6 +1461,8 @@ app_on_key:
     je .edit56
     cmp qword [edit_mode], 6
     je .edit56
+    cmp qword [edit_mode], 7
+    je .edit56
     cmp eax, 1
     je .e_ins
     cmp eax, 2
@@ -1066,6 +1473,8 @@ app_on_key:
     je .e_down
     cmp eax, 5
     je .copy                        ; Ctrl+C copia mesmo editando
+    cmp eax, 26
+    je .paste_req                    ; Ctrl+V cola mesmo editando
     cmp eax, 6
     je .e_commit
     cmp eax, 9
@@ -1082,8 +1491,13 @@ app_on_key:
     je .e_delfwd
     cmp eax, 17
     je .e_tab
+    cmp eax, 20
+    je .e_cut                        ; Ctrl+X recorta a seleção (modo código)
     jmp .cont0
 .e_ins:
+    call sel_maybe_delete           ; com seleção: troca o trecho pelo char
+    test eax, eax
+    jnz .ret
     mov al, [ev_char]
     cmp qword [edit_mode], 2
     je .e_tins
@@ -1093,25 +1507,33 @@ app_on_key:
     call title_insert
     jmp .ret
 .e_nl:
+    call sel_maybe_delete           ; com seleção: troca o trecho (ou limpa)
+    test eax, eax
+    jnz .ret
     cmp qword [edit_mode], 2
     je .e_to_code
     cmp qword [edit_mode], 5
     je .e_lang2tags
     cmp qword [edit_mode], 6
     je .e_tags2title
+    cmp qword [edit_mode], 7
+    je .e_commit                   ; desc é o último campo: Enter commita
     mov al, 10
     call edit_insert
     jmp .ret
 .e_lang2tags:
+    mov qword [sel_active], 0
     mov qword [edit_mode], 6
     jmp .ret
 .e_tags2title:
+    mov qword [sel_active], 0
     mov qword [edit_mode], 1
     call ensure_vis
     jmp .ret
 .e_to_code:
+    mov qword [sel_active], 0
     ; Enter no título -> vai p/ edição do código (cursor no fim)
-    call cur_rec
+    call resolve_rec
     test eax, eax
     jz .ret
     mov eax, [rbx+REC_CLEN_OFF]
@@ -1122,6 +1544,9 @@ app_on_key:
     mov qword [edit_mode], 1
     jmp .ret
 .e_bs:
+    call sel_maybe_delete           ; com seleção: apaga o trecho
+    test eax, eax
+    jnz .ret
     cmp qword [edit_mode], 2
     je .e_tbs
     call edit_backspace
@@ -1130,12 +1555,15 @@ app_on_key:
     call title_backspace
     jmp .ret
 .e_up:
+    mov qword [sel_active], 0       ; navegar limpa a seleção
     call edit_up
     jmp .ret
 .e_down:
+    mov qword [sel_active], 0
     call edit_down
     jmp .ret
 .e_left:
+    mov qword [sel_active], 0
     cmp qword [edit_mode], 2
     je .e_tleft
     call edit_left
@@ -1144,6 +1572,7 @@ app_on_key:
     call title_left
     jmp .ret
 .e_right:
+    mov qword [sel_active], 0
     cmp qword [edit_mode], 2
     je .e_tright
     call edit_right
@@ -1152,6 +1581,9 @@ app_on_key:
     call title_right
     jmp .ret
 .e_delfwd:
+    call sel_maybe_delete           ; com seleção: apaga o trecho
+    test eax, eax
+    jnz .ret
     cmp qword [edit_mode], 2
     je .e_tdelfwd
     call edit_delfwd
@@ -1159,8 +1591,46 @@ app_on_key:
 .e_tdelfwd:
     call title_delfwd
     jmp .ret
+.e_cut:
+    ; Ctrl+X no código: recorta a seleção (copia + apaga). Sem seleção: nada;
+    ; clipboard ocupado: não apaga (recorte seguro).
+    cmp qword [edit_mode], 1
+    jne .ret
+    cmp qword [sel_active], 0
+    je .ret
+    call resolve_rec
+    test eax, eax
+    jz .ret
+    cmp rbx, [sel_rec]
+    jne .cutstale
+    call sel_copy
+    cmp eax, 0
+    jg .cutdel
+    jl .cutbusy
+    jmp .ret
+.cutstale:
+    mov qword [sel_active], 0
+    jmp .ret
+.cutdel:
+    call sel_delete_range
+    lea rsi, [m_cut]
+    mov edx, m_cut_len
+    call set_msg
+    mov eax, [clip_len]
+    lea rdi, [ibuf]
+    call itoa                       ; "recortado: N" como feedback
+    lea rsi, [ibuf]
+    mov edx, eax
+    call append_msg
+    jmp .ret
+.cutbusy:
+    lea rsi, [m_busy]
+    mov edx, m_busy_len
+    call set_msg
+    jmp .ret
 .e_tab:
-    ; ciclo de campos: titulo(2) -> codigo(1) -> lang(5) -> tags(6) -> titulo
+    mov qword [sel_active], 0       ; troca de campo limpa a seleção
+    ; ciclo: titulo(2) -> codigo(1) -> lang(5) -> tags(6) -> desc(7) -> titulo
     mov rax, [edit_mode]
     cmp rax, 2
     je .e_tab2code
@@ -1168,7 +1638,9 @@ app_on_key:
     je .e_tab_lang
     cmp rax, 5
     je .e_tab_tags
-    ; 6 -> título
+    cmp rax, 6
+    je .e_tab_desc
+    ; 7 -> título
     mov qword [edit_mode], 2
     jmp .ret
 .e_tab_lang:
@@ -1176,6 +1648,9 @@ app_on_key:
     jmp .ret
 .e_tab_tags:
     mov qword [edit_mode], 6
+    jmp .ret
+.e_tab_desc:
+    mov qword [edit_mode], 7
     jmp .ret
 .e_tab2code:
     mov qword [edit_mode], 1
@@ -1185,18 +1660,32 @@ app_on_key:
     mov eax, [ev_btn]
     cmp eax, 1
     jne .ret
+    mov qword [btn_down], 1       ; arrasto: motion passa a estender
+    mov qword [sel_active], 0       ; novo clique cancela arrasto anterior
     mov eax, [ev_mx]
     mov ecx, [ev_my]
     cmp eax, 601
     jb .ret
-    cmp ecx, 60
+    cmp ecx, 77
     jb .ret
-    cmp ecx, 86
+    cmp ecx, 103
     jb .e_mtitle
-    cmp ecx, 110
+    cmp ecx, 127
     jb .e_mlangtags
+    cmp ecx, 159
+    jb .e_mdesc
     mov qword [edit_mode], 1
     call click_to_cursor
+    mov rax, [edit_cursor]          ; F4: ancora o arrasto de seleção
+    mov [sel_a], rax
+    mov [sel_b], rax
+    mov rax, [edit_rec]
+    mov [sel_rec], rax
+    mov qword [sel_active], 1
+    jmp .ret
+.e_mdesc:
+    mov qword [edit_mode], 7
+    call desc_click_to_cursor
     jmp .ret
 .e_mlangtags:
     call lt_pick
@@ -1213,6 +1702,7 @@ app_on_key:
     mov [tags_cursor], rax
     jmp .ret
 .e_mtitle:
+    call title_click_to_cursor       ; igual ao click normal (fix #31)
     mov qword [edit_mode], 2
     jmp .ret
 ; .edit3 — modo 3: renomeando coleção (libsel-3). Só teclas de texto.
@@ -1222,6 +1712,8 @@ app_on_key:
     je .e3_ins
     cmp eax, 2
     je .e3_bs
+    cmp eax, 26
+    je .paste_req
     cmp eax, 6
     je .e3_commit
     cmp eax, 9
@@ -1236,10 +1728,16 @@ app_on_key:
     je .e3_delfwd
     jmp .cont0
 .e3_ins:
+    call sel_maybe_delete           ; limpa eventual seleção do código
+    test eax, eax
+    jnz .ret
     mov al, [ev_char]
     call coll_insert
     jmp .ret
 .e3_bs:
+    call sel_maybe_delete
+    test eax, eax
+    jnz .ret
     call coll_backspace
     jmp .ret
 .e3_left:
@@ -1293,9 +1791,11 @@ app_on_key:
     mov rbx, [pick_rec]
     call assign_save
     mov qword [edit_mode], 0
+    mov qword [sel_active], 0       ; seletor fecha: sem seleção pendente
     jmp .ret
 .e4_cancel:
     mov qword [edit_mode], 0
+    mov qword [sel_active], 0
     lea rsi, [m_cancel]
     mov edx, m_cancel_len
     call set_msg
@@ -1336,9 +1836,10 @@ app_on_key:
 .e4_munf:
     mov qword [pick_sel], 0
     jmp .e4_commit
-; .edit56 — campos 1-linha: language (modo 5) e tags (modo 6).
+; .edit56 — campos 1-linha: language (modo 5), tags (6) e descrição (7).
 ; Insere/apaga/navega via helpers genéricos; Enter/Tab trocam de campo;
-; Esc restaura os 4 campos do snapshot; Ctrl+S commita.
+; Esc restaura os campos do snapshot; Ctrl+S commita; mouse reposiciona
+; (mesma navegação dos modos 1/2 — antes o click era ignorado aqui).
 .edit56:
     mov eax, [ev_kind]
     cmp eax, 3
@@ -1349,6 +1850,8 @@ app_on_key:
     je .e5_ins
     cmp eax, 2
     je .e5_bs
+    cmp eax, 26
+    je .paste_req
     cmp eax, 6
     je .e_commit
     cmp eax, 9
@@ -1359,12 +1862,17 @@ app_on_key:
     je .e5_left
     cmp eax, 12
     je .e5_right
+    cmp eax, 13
+    je .e_mouse
     cmp eax, 16
     je .e5_delfwd
     cmp eax, 17
     je .e_tab
     jmp .cont0
 .e5_ins:
+    call sel_maybe_delete           ; limpa eventual seleção do código
+    test eax, eax
+    jnz .ret
     mov al, [ev_char]               ; al != ev_kind aqui (kinds são 1..21)
     mov [fld_char], al
     call field_setup
@@ -1386,6 +1894,9 @@ app_on_key:
     call lang_step
     jmp .ret
 .e5_bs:
+    call sel_maybe_delete
+    test eax, eax
+    jnz .ret
     call field_setup
     test eax, eax
     jz .ret
@@ -1404,17 +1915,29 @@ app_on_key:
     call fld_right
     jmp .ret
 .e5_delfwd:
+    call sel_maybe_delete
+    test eax, eax
+    jnz .ret
     call field_setup
     test eax, eax
     jz .ret
     call fld_delfwd
     jmp .ret
 .e_cancel:
+    mov qword [sel_active], 0       ; anchors viram lixo no restore
     ; restaura backup (código + título + language + tags)
-    mov rax, [sel]
-    movzx eax, byte [filt_idx+rax]
-    imul eax, eax, REC_SIZE
-    lea rbx, [sn_recs+rax]
+    call resolve_rec
+    test eax, eax
+    jz .ret
+    ; em criação (Ctrl+N sem commit)? remove o rec em vez de restaurar (#26)
+    mov rax, rbx
+    lea rcx, [sn_recs]
+    sub rax, rcx
+    mov ecx, REC_SIZE
+    xor edx, edx
+    div rcx                            ; rax = índice do rec atual
+    cmp rax, [creating_sn]
+    je .e_unmake
     mov ecx, [backup_len]
     mov [rbx+REC_CLEN_OFF], ecx
     lea rsi, [edit_backup]
@@ -1451,32 +1974,131 @@ app_on_key:
     rep movsb
 .rst3:
     mov byte [rdi], 0
+    mov ecx, [desc_blen]
+    mov [desc_len], ecx
+    lea rsi, [desc_backup]
+    lea rdi, [rbx+REC_DESC_OFF]
+    test ecx, ecx
+    jz .rst4
+    rep movsb
+.rst4:
+    mov byte [rdi], 0
     mov qword [edit_mode], 0
     lea rsi, [m_cancel]
     mov edx, m_cancel_len
     call set_msg
     jmp .ret
+.e_unmake:
+    ; Esc descartou a criação: compacta os recs após idx (igual .del_do, mas
+    ; sem snapshot — nada foi persistido) e limpa o estado de edição.
+    mov r10, rax                    ; idx (div não toca r10)
+    mov rax, [sn_count]
+    dec rax
+    sub rax, r10                    ; recs após o idx
+    jbe .e_nomove
+    imul eax, eax, REC_SIZE
+    mov ecx, eax
+    mov eax, r10d
+    imul eax, eax, REC_SIZE
+    lea rdi, [sn_recs+rax]
+    lea rsi, [rdi+REC_SIZE]
+    rep movsb
+.e_nomove:
+    dec qword [sn_count]
+    mov qword [creating_sn], -1
+    mov qword [edit_mode], 0
+    mov qword [edit_rec], 0
+    call filter_rebuild
+    mov qword [sel], 0
+    mov qword [scroll], 0
+    lea rsi, [m_unmade]
+    mov edx, m_unmade_len
+    call set_msg
+    jmp .ret
 .e_commit:
+    mov qword [sel_active], 0       ; commit encerra a seleção
     call edit_commit_save
     jmp .ret
 .ret:
     xor eax, eax
+    add rsp, 8
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
     pop rbp
     ret
 
-; click_to_cursor — posiciona edit_cursor pelo click (ev_mx/ev_my).
-; col=(mx-621)/9, linha=(my-130)/18+code_scroll. Clampa no fim do código.
+; title_click_to_cursor — title_cursor = coluna do click (ev_mx), clamp no len.
+; Um helper p/ os dois caminhos de click no título (normal .m_title e em
+; edição .e_mtitle — antes o segundo só trocava o modo, fix #31).
+; Preserva rbx/r11 do chamador (r11d é scratch interno, salvo na pilha).
+title_click_to_cursor:
+    push rbx
+    push r11
+    sub rsp, 8                      ; 2 pushes + sub: calls alinhados (fix #19)
+    mov eax, [ev_mx]
+    sub eax, 621
+    jge .txok
+    xor eax, eax
+.txok:
+    mov ecx, 9
+    xor edx, edx
+    div ecx                         ; eax = col (chars)
+    mov r11d, eax
+    call resolve_rec                ; rbx=rec (r11 intacto: só rax/rbx)
+    test eax, eax
+    jz .ret
+    lea rsi, [rbx+REC_TITLE_OFF]
+    mov ecx, [rbx+REC_TLEN_OFF]
+    mov edx, r11d
+    call bytecol                    ; eax = byte offset
+    mov [title_cursor], rax
+.ret:
+    add rsp, 8
+    pop r11
+    pop rbx
+    ret
+
+; desc_click_to_cursor — desc_cursor = coluna do click (origem DESC_TXT_X),
+; convertida p/ byte offset (sem partir UTF-8). Usa resolve_rec.
+desc_click_to_cursor:
+    push rbx
+    mov eax, [ev_mx]
+    sub eax, DESC_TXT_X
+    jge .dxok
+    xor eax, eax
+.dxok:
+    mov ecx, 9
+    xor edx, edx
+    div ecx                         ; eax = col chars
+    mov r11d, eax
+    call resolve_rec
+    test eax, eax
+    jz .ret
+    lea rsi, [rbx+REC_DESC_OFF]
+    mov ecx, [desc_len]
+    mov edx, r11d
+    call bytecol                    ; eax = byte offset
+    mov [desc_cursor], rax
+.ret:
+    pop rbx
+    ret
+; col=(mx-638)/9, linha=(my-CODE_TOP_Y+9)/18+code_scroll. Clampa no fim.
+; O +9 (meia fileira) ancora a linha no MEIO visual do glifo: sem ele, clicar
+; no corpo das letras (que fica ~7px acima do baseline) caía na linha de cima.
 ; Preserva rbx/r12/r13 do chamador.
 click_to_cursor:
     push rbx
     push r12
     push r13
-    sub rsp, 8
-    call cur_rec
+    ; 3 pushes: entrada rsp%16==8 -> 0: calls ok, sem sub (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov eax, [ev_my]
-    sub eax, 130
+    sub eax, CODE_TOP_Y - 9
     jge .yok
     xor eax, eax
 .yok:
@@ -1487,7 +2109,7 @@ click_to_cursor:
     add eax, ecx                    ; eax = linha abs alvo
     mov r12d, eax
     mov eax, [ev_mx]
-    sub eax, 621
+    sub eax, 638
     jge .xok
     xor eax, eax
 .xok:
@@ -1511,19 +2133,19 @@ click_to_cursor:
     inc eax
     jmp .cl
 .got:
-    push rax
-    call linelen                    ; eax=len (rbx/r12/r13 intactos)
-    mov ecx, r13d
-    cmp ecx, eax
-    cmova ecx, eax
-    pop rax
-    add eax, ecx
+    mov r10d, eax                   ; pos (byte abs do início da linha)
+    call linelen                    ; eax = len bytes (r13d=col intacto)
+    lea rsi, [rbx+REC_CODE_OFF]
+    add rsi, r10
+    mov ecx, eax                    ; maxlen
+    mov edx, r13d                   ; col em chars (pixels)
+    call bytecol                    ; eax = byte offset (sem partir UTF-8)
+    add eax, r10d
     mov [edit_cursor], rax
     call col_of_cursor
     mov [edit_goal], rax
     call ensure_vis
 .ret:
-    add rsp, 8
     pop r13
     pop r12
     pop rbx
@@ -1557,7 +2179,8 @@ cid_match:
 ; Preserva rbx. Usado pelo commit do seletor (tecla, Enter ou clique).
 assign_save:
     push rbx
-    sub rsp, 8
+    ; 1 push: na entrada rsp%16==8 -> agora 0: calls ok (fix #19)
+    call db_snapshot wrt ..plt
     cmp qword [mv_k], -1
     je .asunf
     mov eax, [mv_k]
@@ -1570,9 +2193,7 @@ assign_save:
 .asunf:
     mov byte [rbx+REC_CID_OFF], 0
 .asstamp:
-    mov eax, 201
-    xor edi, edi
-    syscall                         ; epoch (clobber rcx,r11 — mortos)
+    call now_ms wrt ..plt             ; ms Unix (fix #18); preserva rbx/r11
     mov [rbx+REC_UPDATED_OFF], rax
     call db_save wrt ..plt
     cmp rax, 0
@@ -1599,11 +2220,11 @@ assign_save:
     call append_msg
     jmp .asdone
 .asfail:
+    call db_restore wrt ..plt
     lea rsi, [m_fail]
     mov edx, m_fail_len
     call set_msg
 .asdone:
-    add rsp, 8
     pop rbx
     ret
 
@@ -1613,16 +2234,18 @@ assign_save:
 ; Todos os loads de len são dword (mov e..): ver contract.md §2.
 
 ; field_setup — rbx=rec via cur_rec; aponta o campo do edit_mode (5=lang,
-; 6=tags). eax 1 ok / 0 inválido. Deixa rdi/rsi/rdx/ecx prontos.
+; 6=tags, 7=desc). eax 1 ok / 0 inválido. Deixa rdi/rsi/rdx/ecx prontos.
 field_setup:
     push rbx
-    call cur_rec
+    call resolve_rec
     test eax, eax
     jz .bad
     cmp qword [edit_mode], 5
     je .lang
     cmp qword [edit_mode], 6
     je .tags
+    cmp qword [edit_mode], 7
+    je .desc
     jmp .bad
 .lang:
     lea rdi, [rbx+REC_LANG_OFF]
@@ -1640,6 +2263,14 @@ field_setup:
     mov eax, 1
     pop rbx
     ret
+.desc:
+    lea rdi, [rbx+REC_DESC_OFF]
+    lea rsi, [desc_len]
+    lea rdx, [desc_cursor]
+    mov ecx, REC_DESC_LEN
+    mov eax, 1
+    pop rbx
+    ret
 .bad:
     xor eax, eax
     pop rbx
@@ -1651,6 +2282,8 @@ fld_insert:
     push r13
     push r14
     push r15
+    sub rsp, 8
+    ; 4 pushes + sub 8: entrada rsp%16==8 -> 0: o call set_msg ok (fix #19)
     mov r12, rdi                    ; base
     mov r13, rsi                    ; &len
     mov r14, rdx                    ; &cursor
@@ -1683,6 +2316,7 @@ fld_insert:
     mov edx, m_fieldfull_len
     call set_msg
 .ret:
+    add rsp, 8
     pop r15
     pop r14
     pop r13
@@ -1699,18 +2333,27 @@ fld_backspace:
     mov r14, rdx
     cmp qword [r14], 0
     je .ret
-    dec qword [r14]
-    mov rcx, [r14]
+    mov r10, [r14]                  ; cursor (r10/r11 sobrevivem ao helper;
+    mov rdi, r12                    ; base. rdx/rcx MORREM no call — nunca
+    mov edx, r10d                   ; reusar após call! (bug: usava rdx aqui))
+    call utf8_step_back             ; (fix #33)
+    mov [r14], rax                  ; cursor = início da sequência
+    sub r10, rax                    ; r10 = nbytes removidos
+    mov rcx, rax
+    mov rsi, rax
+    add rsi, r10
     mov edx, [r13]                  ; dword!
-.mv: cmp rcx, rdx
+.mv: cmp rsi, rdx
     jae .out
-    mov r10b, [r12+rcx+1]
-    mov [r12+rcx], r10b
+    mov r11b, [r12+rsi]
+    mov [r12+rcx], r11b
+    inc rsi
     inc rcx
     jmp .mv
 .out:
-    dec dword [r13]
     mov eax, [r13]
+    sub eax, r10d
+    mov [r13], eax
     mov byte [r12+rax], 0
 .ret:
     pop r14
@@ -1726,19 +2369,28 @@ fld_delfwd:
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
-    mov rcx, [r14]
-    mov edx, [r13]                  ; dword!
-    cmp rcx, rdx
+    mov rdx, [r14]                  ; cursor
+    mov esi, [r13]                  ; len
+    cmp rdx, rsi
     jae .ret
-.mv: cmp rcx, rdx
+    mov rdi, r12
+    call utf8_step_fwd              ; F (fix #33)
+    mov r10d, eax
+    mov ecx, [r14]
+    mov esi, r10d
+    mov edx, [r13]
+.mv: cmp esi, edx
     jae .out
-    mov r10b, [r12+rcx+1]
-    mov [r12+rcx], r10b
+    mov r11b, [r12+rsi]
+    mov [r12+rcx], r11b
+    inc rsi
     inc rcx
     jmp .mv
 .out:
-    dec dword [r13]
     mov eax, [r13]
+    sub eax, r10d
+    add eax, ecx
+    mov [r13], eax
     mov byte [r12+rax], 0
 .ret:
     pop r14
@@ -1750,7 +2402,12 @@ fld_delfwd:
 fld_left:
     cmp qword [rdx], 0
     je .ret
-    dec qword [rdx]
+    sub rsp, 8                      ; sem pushes: alinha p/ call (fix #19)
+    mov r10, rdx                    ; &cursor em r10 (rcx MORRE no call!)
+    mov edx, [rdx]                  ; pos
+    call utf8_step_back             ; (fix #33)
+    mov [r10], rax
+    add rsp, 8
 .ret:
     ret
 
@@ -1758,7 +2415,13 @@ fld_right:
     mov rax, [rdx]
     cmp eax, [rsi]                  ; dword!
     jae .ret
-    inc qword [rdx]
+    sub rsp, 8                      ; sem pushes: alinha p/ call (fix #19)
+    mov r10, rdx                    ; &cursor em r10 (rcx MORRE no call!)
+    mov edx, eax                    ; pos
+    mov esi, [rsi]                  ; len
+    call utf8_step_fwd              ; (fix #33)
+    mov [r10], rax
+    add rsp, 8
 .ret:
     ret
 
@@ -1768,17 +2431,28 @@ fld_right:
 ; Limiar lang/tags = 621+llen*9+13 (meio do separador).
 lt_pick:
     push rbx
-    call cur_rec
+    call resolve_rec
     test eax, eax
     jz .bad
+    ; largura EXIBIDA (fix #25): render trunca lang em LANG_DISP_MAX; o
+    ; hit-test usa o mesmo limite, senão cliques nas tags visíveis caem no lang
     mov r8d, [rbx+REC_LLEN_OFF]
-    mov eax, r8d
+    cmp r8d, LANG_DISP_MAX
+    jbe .wok
+    mov r8d, LANG_DISP_MAX
+.wok:
+    ; largura em CÉLULAS p/ o hit-test (bytes deslocariam a fronteira c/ acento)
+    lea rsi, [rbx+REC_LANG_OFF]
+    mov ecx, r8d
+    call charcount
+    mov r9d, eax
+    mov eax, r9d
     imul eax, eax, 9
     add eax, 634
     mov edx, [ev_mx]
     cmp edx, eax
     jb .lang
-    mov eax, r8d
+    mov eax, r9d
     imul eax, eax, 9
     add eax, 648                    ; 621 + 27
     mov ecx, edx
@@ -1789,10 +2463,15 @@ lt_pick:
     mov eax, ecx
     mov ecx, 9
     xor edx, edx
-    div ecx
+    div ecx                         ; eax = col chars
+    mov edx, eax
+    lea rsi, [rbx+REC_TAGS_OFF]
     mov ecx, [rbx+REC_GLEN_OFF]
-    cmp eax, ecx
-    cmova eax, ecx
+    cmp ecx, TAGS_DISP_MAX           ; tags exibidas truncadas em 36 (fix #25)
+    jbe .tgok
+    mov ecx, TAGS_DISP_MAX
+.tgok:
+    call bytecol                    ; eax = byte offset
     mov edx, eax                    ; coluna
     mov eax, 6
     pop rbx
@@ -1805,9 +2484,11 @@ lt_pick:
 .l1:
     mov ecx, 9
     xor edx, edx
-    div ecx
-    cmp eax, r8d
-    cmova eax, r8d
+    div ecx                         ; eax = col chars
+    mov edx, eax
+    lea rsi, [rbx+REC_LANG_OFF]
+    mov ecx, r8d
+    call bytecol                    ; eax = byte offset
     mov edx, eax                    ; coluna
     mov eax, 5
     pop rbx
@@ -1859,7 +2540,7 @@ lang_step:
     push r12
     sub rsp, 8
     mov r12d, edi
-    call cur_rec
+    call resolve_rec
     test eax, eax
     jz .ret
     call lang_find
@@ -1921,14 +2602,99 @@ help_draw:
     push r14
     push r15
     sub rsp, 8
-    FILL 300, 140, 680, 520, C_BG
-    FILL 300, 140, 680, 1, C_ACCENT
-    FILL 300, 659, 680, 1, C_ACCENT
-    FILL 300, 140, 1, 520, C_ACCENT
-    FILL 979, 140, 1, 520, C_ACCENT
-    DTEXT 324, 180, C_TEXT, t_helptitle
-    DTEXT 700, 180, C_DIM, t_helpclose
-    FILL 324, 196, 630, 1, C_BORDER
+    ; pass 1: maior desc (cap 100 p/ caber em 1280); card se ajusta ao texto.
+    lea rbx, [help_rows]
+    xor r15d, r15d
+.hm_loop:
+    lea rax, [help_rows_end]
+    cmp rbx, rax
+    jae .hm_done
+    mov rdi, [rbx+8]
+    call hstrlen
+    cmp eax, 100
+    jbe .hm_ok
+    mov eax, 100
+.hm_ok:
+    cmp eax, r15d
+    jbe .hm_next
+    mov r15d, eax
+.hm_next:
+    add rbx, 16
+    jmp .hm_loop
+.hm_done:
+    ; largura 264+max*9 (mínimo 680 p/ conteúdo curto); x centralizado e par.
+    mov r11d, r15d                  ; r11d = teto do texto (chars)
+    mov eax, r15d
+    imul eax, eax, 9
+    add eax, 264
+    cmp eax, 680
+    jae .hm_wok
+    mov eax, 680
+.hm_wok:
+    mov r12d, eax                   ; r12d = largura
+    mov ebx, eax
+    shr ebx, 1
+    mov eax, 640
+    sub eax, ebx
+    and eax, -2
+    mov r15d, eax                   ; r15d = card_x
+    ; fundo + moldura
+    mov edi, r15d
+    mov esi, 140
+    mov edx, r12d
+    mov ecx, 520
+    mov r8d, C_PANEL
+    call platform_fill_rect wrt ..plt
+    mov edi, r15d
+    mov esi, 140
+    mov edx, r12d
+    mov ecx, 2
+    mov r8d, C_ACCENT
+    call platform_fill_rect wrt ..plt
+    mov edi, r15d
+    mov esi, 659
+    mov edx, r12d
+    mov ecx, 1
+    mov r8d, C_BORDER
+    call platform_fill_rect wrt ..plt
+    mov edi, r15d
+    mov esi, 140
+    mov edx, 1
+    mov ecx, 520
+    mov r8d, C_BORDER
+    call platform_fill_rect wrt ..plt
+    mov edi, r15d
+    add edi, r12d
+    sub edi, 1
+    mov esi, 140
+    mov edx, 1
+    mov ecx, 520
+    mov r8d, C_BORDER
+    call platform_fill_rect wrt ..plt
+    lea edi, [r15+24]
+    mov esi, 180
+    mov edx, C_TEXT
+    lea rcx, [t_helptitle]
+    mov r8d, t_helptitle_len
+    call platform_draw_text wrt ..plt
+    mov edi, r15d
+    add edi, r12d
+    sub edi, 24
+    mov eax, t_helpclose_len
+    imul eax, eax, 9
+    sub edi, eax
+    mov esi, 180
+    mov edx, C_DIM
+    lea rcx, [t_helpclose]
+    mov r8d, t_helpclose_len
+    call platform_draw_text wrt ..plt
+    lea edi, [r15+24]
+    mov esi, 196
+    mov edx, r12d
+    sub edx, 48
+    mov ecx, 1
+    mov r8d, C_BORDER
+    call platform_fill_rect wrt ..plt
     lea rbx, [help_rows]
     mov r14d, 222
 .hloop:
@@ -1938,7 +2704,7 @@ help_draw:
     mov rdi, [rbx]
     call hstrlen
     mov r13d, eax
-    mov edi, 324
+    lea edi, [r15+24]
     mov esi, r14d
     mov edx, C_ACCENT
     mov rcx, [rbx]
@@ -1947,7 +2713,9 @@ help_draw:
     mov rdi, [rbx+8]
     call hstrlen
     mov r13d, eax
-    mov edi, 540
+    cmp r13d, r11d
+    cmova r13d, r11d
+    lea edi, [r15+240]
     mov esi, r14d
     mov edx, C_TEXT
     mov rcx, [rbx+8]
@@ -2013,7 +2781,7 @@ append_title:
 ; do_save — db_save + msg "salvo N (nativo)". Preserva rbx.
 do_save:
     push rbx
-    sub rsp, 8
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
     call db_save wrt ..plt          ; rax = n ou -1
     cmp rax, 0
     jl .fail
@@ -2033,7 +2801,6 @@ do_save:
     mov edx, m_fail_len
     call set_msg
 .done:
-    add rsp, 8
     pop rbx
     ret
 
@@ -2054,15 +2821,41 @@ cur_rec:
 .ret:
     ret
 
+; resolve_rec — rbx = rec da edição ativa nos modos 1/2/5/6; senão cur_rec.
+; Os helpers de edição chamam isto porque filt[sel] pode mudar enquanto o
+; texto é digitado. Modos 3/4 continuam com cur_rec/coll_cur/pick_rec.
+resolve_rec:
+    mov rax, [edit_mode]
+    cmp rax, 1
+    je .pin
+    cmp rax, 2
+    je .pin
+    cmp rax, 5
+    je .pin
+    cmp rax, 6
+    je .pin
+    cmp rax, 7
+    je .pin
+    jmp cur_rec
+.pin:
+    mov rbx, [edit_rec]
+    test rbx, rbx
+    jz cur_rec
+    mov eax, 1
+    ret
+
 ; begin_edit(edi=1 código, 2 título) — snapshot código+título, entra no edit.
 ; eax 1 ok / 0 vazio. Preserva rbx do chamador.
 begin_edit:
     push rbx
-    sub rsp, 8
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
     mov r10d, edi                   ; r10d=modo (mov r32 zera o alto)
     call cur_rec
     test eax, eax
     jz .ret
+    mov [edit_rec], rbx
+    mov qword [sel_active], 0       ; edição nova: seleção antiga é inválida
+    mov qword [side_focus], 0       ; edição cancela o foco da sidebar
     mov ecx, [rbx+REC_CLEN_OFF]
     mov [backup_len], rcx
     lea rsi, [rbx+REC_CODE_OFF]
@@ -2099,7 +2892,7 @@ begin_edit:
     mov byte [rdi], 0
     mov rax, [lang_blen]
     mov [lang_cursor], rax
-    ; tags (modo 6) — string "a, b" (o writer explode em array)
+    ; tags (modo 6) — string com escape ("a\,b,c": '\,'=vírgula literal)
     mov ecx, [rbx+REC_GLEN_OFF]
     mov [tags_blen], rcx
     lea rsi, [rbx+REC_TAGS_OFF]
@@ -2111,17 +2904,34 @@ begin_edit:
     mov byte [rdi], 0
     mov rax, [tags_blen]
     mov [tags_cursor], rax
+    ; descrição (modo 7): len viva via strlen (sem célula no rec, fix #32)
+    lea rsi, [rbx+REC_DESC_OFF]
+    mov edx, REC_DESC_LEN
+    call strlen_cap wrt ..plt
+    mov [desc_len], eax
+    mov [desc_blen], rax
+    lea rsi, [rbx+REC_DESC_OFF]
+    lea rdi, [desc_backup]
+    mov ecx, eax
+    test ecx, ecx
+    jz .bk4
+    rep movsb
+.bk4:
+    mov byte [rdi], 0
+    mov rax, [desc_blen]
+    mov [desc_cursor], rax
     mov qword [code_scroll], 0
     mov [edit_mode], r10
     call ensure_vis
     mov eax, 1
 .ret:
-    add rsp, 8
     pop rbx
     ret
 
-; col_of_cursor — rbx=rec; eax = coluna do cursor
+; col_of_cursor — rbx=rec; eax = coluna do cursor em CARACTERES (fix #37).
+; edit_goal e carets contam células, não bytes (acento = 1 célula).
 col_of_cursor:
+    push rbx                      ; alinha p/ charcount + preserva rec
     mov rax, [edit_cursor]
     mov rcx, rax
 .cb: test rcx, rcx
@@ -2132,7 +2942,13 @@ col_of_cursor:
     dec rcx
     jmp .cb
 .done:
+    ; rax=cursor(byte), rcx=início da linha(byte): conta chars no intervalo
+    lea rsi, [rbx+REC_CODE_OFF]
+    add rsi, rcx
     sub rax, rcx
+    mov ecx, eax
+    call charcount
+    pop rbx
     ret
 
 ; line_start(eax=pos) — rbx=rec; eax = início da linha
@@ -2149,7 +2965,9 @@ line_start:
     mov eax, ecx
     ret
 
-; linelen(eax=start) — rbx=rec; eax = tamanho da linha (sem \n)
+; linelen(eax=start) — rbx=rec; eax = tamanho da linha (sem terminador).
+; CRLF conta como UM terminador e o CR não entra no len (igual ao render —
+; fix #24); CR solitário é conteúdo (igual à navegação, que só vê LF).
 linelen:
     mov r8d, eax
     mov ecx, [rbx+REC_CLEN_OFF]
@@ -2157,8 +2975,17 @@ linelen:
     mov edx, r8d
 .ll: cmp edx, ecx
     jae .done
-    cmp byte [rdi+rdx], 10
+    mov al, [rdi+rdx]
+    cmp al, 10
     je .done
+    cmp al, 13
+    jne .next
+    lea r9d, [rdx+1]
+    cmp r9d, ecx
+    jae .next
+    cmp byte [rdi+r9], 10
+    je .done
+.next:
     inc edx
     jmp .ll
 .done:
@@ -2191,12 +3018,137 @@ prev_start:
 .done:
     ret
 
+; utf8_step_back(rdi=base, edx=pos) — eax = início da sequência UTF-8 que
+; termina em pos (pos>0). Nunca para no meio de sequência (fix #33).
+; Leaf: só rax/rcx/rdx.
+utf8_step_back:
+    test edx, edx
+    jz .zero
+    dec edx
+.back:
+    test edx, edx
+    jz .out
+    mov cl, [rdi+rdx]
+    cmp cl, 0x80
+    jb .out
+    cmp cl, 0xC0
+    jae .out
+    dec edx
+    jmp .back
+.out:
+    mov eax, edx
+    ret
+.zero:
+    xor eax, eax
+    ret
+
+; utf8_step_fwd(rdi=base, esi=len, edx=pos) — eax = pos após a sequência em
+; pos (clamp em len). Lead inválido avança 1 (nunca trava). Leaf.
+utf8_step_fwd:
+    cmp edx, esi
+    jae .atend
+    mov cl, [rdi+rdx]
+    cmp cl, 0x80
+    jb .one
+    cmp cl, 0xE0
+    jb .two
+    cmp cl, 0xF0
+    jb .three
+    cmp cl, 0xF5
+    jae .one
+    add edx, 4
+    jmp .clamp
+.three:
+    add edx, 3
+    jmp .clamp
+.two:
+    add edx, 2
+    jmp .clamp
+.one:
+    inc edx
+.clamp:
+    cmp edx, esi
+    jbe .out
+    mov edx, esi
+    jmp .out
+.atend:
+    mov edx, esi
+.out:
+    mov eax, edx
+    ret
+
+; charcount(rsi=ptr, ecx=len) — eax = nº de caracteres UTF-8 (bytes fora de
+; 80..BF). Grade 9px é por CARACTERE; cursores/carets usam isto (fix #37:
+; acento de 2 bytes deslocava o caret uma célula p/ direita).
+; Leaf: clobbers rax rcx rdx. Preserva rbx rsi rdi r8-r15.
+charcount:
+    xor eax, eax
+    xor edx, edx
+.cc_l:
+    cmp edx, ecx
+    jae .cc_done
+    cmp byte [rsi+rdx], 0x80
+    jb .cc_one
+    cmp byte [rsi+rdx], 0xBF
+    ja .cc_one
+    inc edx                       ; continuação: pula sem contar
+    jmp .cc_l
+.cc_one:
+    inc eax
+    inc edx
+    jmp .cc_l
+.cc_done:
+    ret
+
+; bytecol(rsi=ptr, ecx=maxlen, edx=col_chars) — eax = offset em bytes do
+; char nº edx (clamp em maxlen, sem partir sequência). Inverso do charcount.
+; Leaf: clobbers rax rcx rdx rsi r8 r9 (SEM pushes: harness C usa red-zone).
+; Preserva rbx r10 r11 r12-r15 rbp rsp.
+bytecol:
+    xor eax, eax
+    xor r8d, r8d
+.bc_l:
+    cmp r8d, edx
+    jae .bc_done
+    cmp eax, ecx
+    jae .bc_done
+    mov r9b, [rsi+rax]
+    inc eax
+    cmp r9b, 0x80
+    jb .bc_one
+    cmp r9b, 0xE0
+    jb .bc_two
+    cmp r9b, 0xF0
+    jb .bc_three
+    cmp r9b, 0xF5
+    jae .bc_one
+    add eax, 3
+    jmp .bc_cl
+.bc_three:
+    add eax, 2
+    jmp .bc_cl
+.bc_two:
+    inc eax
+    jmp .bc_cl
+.bc_one:
+.bc_cl:
+    cmp eax, ecx
+    jbe .bc_ok
+    mov eax, ecx
+    jmp .bc_done
+.bc_ok:
+    inc r8d
+    jmp .bc_l
+.bc_done:
+    ret
+
 ; ensure_vis — ajusta code_scroll p/ cursor visível
 ensure_vis:
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
     ; auto-suficiente: resolve o rec via cur_rec. Antes assumia rbx=rec, e os
     ; atalhos de troca de campo (Enter nas tags / Tab titulo->codigo) chamavam
     ; com rbx=lixo -> line_index lia [2+256] e segfaultava (si_addr=0x102).
-    call cur_rec
+    call resolve_rec
     test eax, eax
     jz .done
     mov rax, [edit_cursor]
@@ -2214,14 +3166,15 @@ ensure_vis:
 .set:
     mov [code_scroll], rax
 .done:
+    add rsp, 8
     ret
 
 ; edit_insert(al=char)
 edit_insert:
     push rbx
-    sub rsp, 8
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
     mov dl, al                      ; ch (cur_rec preserva rdx? usa só rax — ok)
-    call cur_rec
+    call resolve_rec
     test eax, eax
     jz .ret
     mov eax, [rbx+REC_CLEN_OFF]
@@ -2257,70 +3210,395 @@ edit_insert:
     mov edx, m_full_len
     call set_msg
 .ret:
-    add rsp, 8
+    pop rbx
+    ret
+
+; sel_copy — copia a seleção [a,b) do código p/ o clipboard (snapshot em
+; clip_buf + claim). eax = bytes (>0 ok), 0 = sem seleção, -1 = clipboard
+; ocupado (não copiou). Preserva rbx.
+sel_copy:
+    push rbx
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
+    cmp qword [sel_active], 0
+    je .none
+    call resolve_rec
+    test eax, eax
+    jz .none
+    cmp rbx, [sel_rec]
+    jne .none
+    mov r8, [sel_a]
+    mov r9, [sel_b]
+    cmp r8, r9
+    je .none
+    cmp r8, r9
+    jbe .rok
+    xchg r8, r9
+.rok:
+    mov eax, [rbx+REC_CLEN_OFF]     ; dword!
+    cmp r8, rax
+    jae .none                       ; âncora além do fim: nada a copiar
+    cmp r9, rax
+    jbe .rok2
+    mov r9, rax
+.rok2:
+    cmp r8, r9
+    jae .none
+    lea rsi, [rbx+REC_CODE_OFF]
+    add rsi, r8
+    mov rcx, r9
+    sub rcx, r8                     ; rcx = n bytes
+    mov [clip_len], ecx            ; ANTES do rep (que zera rcx); dword!
+    lea rdi, [clip_buf]
+    rep movsb
+    lea rax, [clip_buf]
+    mov [clip_ptr], rax
+    call platform_claim_clipboard wrt ..plt
+    test eax, eax
+    jz .busy
+    mov eax, [clip_len]
+    jmp .ret
+.busy:
+    mov eax, -1
+    jmp .ret
+.none:
+    xor eax, eax
+.ret:
+    pop rbx
+    ret
+
+; sel_delete_range — apaga [min(a,b), max(a,b)) do código (rbx=rec via
+; resolve_rec) sem mexer no clipboard. Consome a seleção (sel_active=0).
+; eax = bytes removidos (0 = sem seleção). Cursor vai p/ o início.
+; Preserva rbx.
+sel_delete_range:
+    push rbx
+    ; 1 push: calls ok (fix #19)
+    cmp qword [sel_active], 0
+    je .none
+    call resolve_rec
+    test eax, eax
+    jz .none
+    cmp rbx, [sel_rec]
+    jne .none
+    mov r8, [sel_a]
+    mov r9, [sel_b]
+    cmp r8, r9
+    je .none
+    cmp r8, r9
+    jbe .rok
+    xchg r8, r9
+.rok:
+    mov eax, [rbx+REC_CLEN_OFF]     ; dword!
+    cmp r8, rax
+    jae .none
+    cmp r9, rax
+    jbe .rok2
+    mov r9, rax
+.rok2:
+    sub r9, r8                      ; r9 = n bytes
+    jbe .none
+    mov r10, r9                     ; n salvo
+    lea rdi, [rbx+REC_CODE_OFF]
+    add rdi, r8                     ; dst = base+a
+    mov rcx, rax
+    sub rcx, r8
+    sub rcx, r10                    ; rcx = bytes após o trecho
+    jz .nomv
+    lea rsi, [rbx+REC_CODE_OFF]
+    mov rax, r8
+    add rax, r10
+    add rsi, rax                    ; src = base+a+n
+    rep movsb
+.nomv:
+    mov eax, [rbx+REC_CLEN_OFF]
+    sub eax, r10d
+    mov [rbx+REC_CLEN_OFF], eax
+    lea rdi, [rbx+REC_CODE_OFF]
+    mov byte [rdi+rax], 0
+    mov [edit_cursor], r8
+    mov qword [sel_active], 0       ; seleção consumida
+    call col_of_cursor
+    mov [edit_goal], rax
+    call ensure_vis
+    mov eax, r10d
+    jmp .ret
+.none:
+    xor eax, eax
+.ret:
+    pop rbx
+    ret
+
+; sel_maybe_delete — se há seleção de código no rec atual, apaga o trecho
+; (sem clipboard) e retorna 1; senão limpa eventual seleção obsoleta e
+; retorna 0 (chamador segue o fluxo normal). Preserva rbx.
+sel_maybe_delete:
+    push rbx
+    ; 1 push: calls ok (fix #19)
+    cmp qword [sel_active], 0
+    je .proceed
+    call resolve_rec
+    test eax, eax
+    jz .clear
+    cmp qword [edit_mode], 1
+    jne .clear                       ; seleção é sempre do código
+    cmp rbx, [sel_rec]
+    jne .clear
+    mov rax, [sel_a]
+    cmp rax, [sel_b]
+    je .clear                        ; vazia: limpa e segue
+    call sel_delete_range
+    mov eax, 1
+    jmp .ret
+.clear:
+    mov qword [sel_active], 0
+.proceed:
+    xor eax, eax
+.ret:
+    pop rbx
+    ret
+
+; paste_insert — insere paste_buf[0..paste_len) no alvo atual e avisa.
+; Alvos: código(1)/título(2)/coll(3)/busca(0)/lang-tags-desc(5,6,7, via fld);
+; modo 4 (seletor) descarta em silêncio. Conta o inserido de verdade (len
+; depois - len antes): os helpers truncam no cap em silêncio e o "colado: N"
+; precisa ser honesto. Byte a byte como o kpend: sequência UTF-8 preservada.
+; Preserva rbx.
+paste_insert:
+    push rbx
+    sub rsp, 32                     ; slots: rest,idx,len0,(reserva)
+    ; bal 8+32=40 ≡ 8: calls ok (fix #19)
+    mov eax, [paste_len]
+    mov [rsp], eax                  ; rest (dword)
+    mov qword [rsp+8], 0            ; idx
+    call sel_maybe_delete           ; com seleção no código: cola por cima
+    mov eax, [edit_mode]
+    cmp eax, 1
+    je .ppcode
+    cmp eax, 2
+    je .pptitle
+    cmp eax, 3
+    je .ppcoll
+    cmp eax, 5
+    je .ppfld
+    cmp eax, 6
+    je .ppfld
+    cmp eax, 7
+    je .ppfld
+    cmp eax, 4
+    je .ppret                       ; seletor aberto: descarta em silêncio
+    jmp .ppsearch
+.ppcode:
+    call resolve_rec
+    test eax, eax
+    jz .ppret
+    mov eax, [rbx+REC_CLEN_OFF]     ; dword!
+    mov [rsp+16], eax               ; len0
+.ppcodeloop:
+    mov eax, [rsp]
+    test eax, eax
+    jz .ppcodeend
+    mov rcx, [rsp+8]
+    mov al, [paste_buf+rcx]
+    call edit_insert
+    inc qword [rsp+8]
+    dec dword [rsp]
+    jmp .ppcodeloop
+.ppcodeend:
+    mov eax, [rbx+REC_CLEN_OFF]     ; rbx intacto (edit_insert preserva)
+    sub eax, [rsp+16]
+    jmp .ppdone
+.pptitle:
+    call resolve_rec
+    test eax, eax
+    jz .ppret
+    mov eax, [rbx+REC_TLEN_OFF]     ; dword!
+    mov [rsp+16], eax
+.pptitleloop:
+    mov eax, [rsp]
+    test eax, eax
+    jz .pptitleend
+    mov rcx, [rsp+8]
+    mov al, [paste_buf+rcx]
+    call title_insert
+    inc qword [rsp+8]
+    dec dword [rsp]
+    jmp .pptitleloop
+.pptitleend:
+    mov eax, [rbx+REC_TLEN_OFF]
+    sub eax, [rsp+16]
+    jmp .ppdone
+.ppcoll:
+    call coll_cur
+    cmp eax, 0
+    jl .ppret
+    mov r11d, eax
+    mov eax, [coll_lens+r11*4]
+    mov [rsp+16], eax
+.ppcolloop:
+    mov eax, [rsp]
+    test eax, eax
+    jz .ppcolend
+    mov rcx, [rsp+8]
+    mov al, [paste_buf+rcx]
+    call coll_insert
+    inc qword [rsp+8]
+    dec dword [rsp]
+    jmp .ppcolloop
+.ppcolend:
+    call coll_cur
+    mov r11d, eax
+    mov eax, [coll_lens+r11*4]
+    sub eax, [rsp+16]
+    jmp .ppdone
+.ppfld:
+    call field_setup
+    test eax, eax
+    jz .ppret
+    mov eax, [rsi]                  ; len via &len do setup
+    mov [rsp+16], eax
+.ppfldloop:
+    mov eax, [rsp]
+    test eax, eax
+    jz .ppfldend
+    call field_setup                ; re-aponta (cap varia por modo)
+    test eax, eax
+    jz .ppfldend
+    mov rcx, [rsp+8]
+    mov al, [paste_buf+rcx]
+    call fld_insert
+    inc qword [rsp+8]
+    dec dword [rsp]
+    jmp .ppfldloop
+.ppfldend:
+    call field_setup
+    mov eax, [rsi]
+    sub eax, [rsp+16]
+    jmp .ppdone
+.ppsearch:
+    mov qword [q_focus], 1          ; colar na busca foca a busca (como digitar)
+    mov qword [side_focus], 0
+    mov rax, [qlen]
+    mov [rsp+16], rax               ; len0 (qword)
+.ppsearchloop:
+    mov eax, [rsp]
+    test eax, eax
+    jz .ppsearchend
+    mov rax, [qlen]
+    cmp rax, QUERY_MAX
+    jae .ppsearchend
+    mov rcx, [rsp+8]
+    mov dl, [paste_buf+rcx]
+    mov [qbuf+rax], dl
+    inc rax
+    mov [qlen], rax
+    inc qword [rsp+8]
+    dec dword [rsp]
+    jmp .ppsearchloop
+.ppsearchend:
+    mov rax, [qlen]
+    sub rax, [rsp+16]               ; N cabe em eax (busca é curta)
+    jmp .ppdone
+.ppdone:
+    test eax, eax
+    jz .ppempty
+    mov [rsp], eax                  ; reusa o slot p/ N
+    lea rsi, [m_pasted]
+    mov edx, m_pasted_len
+    call set_msg
+    mov eax, [rsp]
+    lea rdi, [ibuf]
+    call itoa
+    lea rsi, [ibuf]
+    mov edx, eax
+    call append_msg
+    jmp .ppout
+.ppempty:
+    lea rsi, [m_pempty]
+    mov edx, m_pempty_len
+    call set_msg
+.ppout:
+    add rsp, 32
+    pop rbx
+    ret
+.ppret:
+    add rsp, 32
     pop rbx
     ret
 
 ; edit_backspace — apaga char antes do cursor
 edit_backspace:
     push rbx
-    sub rsp, 8
-    call cur_rec
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [edit_cursor]
     test rax, rax
     jz .ret
-    dec rax
-    mov [edit_cursor], rax
+    mov r10, rax                    ; cursor (fim da sequência a remover)
     lea rdi, [rbx+REC_CODE_OFF]
-    mov rcx, rax
+    mov edx, eax
+    call utf8_step_back             ; eax = início da sequência (fix #33)
+    mov [edit_cursor], rax
+    sub r10, rax                    ; r10 = nbytes removidos
+    mov rcx, rax                    ; dst
+    mov rsi, rax
+    add rsi, r10                    ; src = cursor antigo
     mov edx, [rbx+REC_CLEN_OFF]     ; dword! (r64 leria fav/id junto)
-.mv: cmp rcx, rdx
+.mv: cmp rsi, rdx
     jae .mvout
-    mov r10b, [rdi+rcx+1]
-    mov [rdi+rcx], r10b
+    mov r11b, [rdi+rsi]
+    mov [rdi+rcx], r11b
+    inc rsi
     inc rcx
     jmp .mv
 .mvout:
-    dec dword [rbx+REC_CLEN_OFF]
+    sub dword [rbx+REC_CLEN_OFF], r10d
     mov eax, [rbx+REC_CLEN_OFF]
     mov byte [rdi+rax], 0
     call col_of_cursor
     mov [edit_goal], rax
     call ensure_vis
 .ret:
-    add rsp, 8
     pop rbx
     ret
 
 ; edit_left / edit_right
 edit_left:
-    call cur_rec
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [edit_cursor]
     test rax, rax
     jz .ret
-    dec rax
+    lea rdi, [rbx+REC_CODE_OFF]
+    mov edx, eax
+    call utf8_step_back             ; nunca no meio de sequência (fix #33)
     mov [edit_cursor], rax
     call col_of_cursor
     mov [edit_goal], rax
 .ret:
+    add rsp, 8
     ret
 
 edit_right:
-    call cur_rec
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [edit_cursor]
     cmp eax, [rbx+REC_CLEN_OFF]     ; eax==cursor (pequeno); cmp r64 leria 8B
     jae .ret
-    inc rax
+    lea rdi, [rbx+REC_CODE_OFF]
+    mov esi, [rbx+REC_CLEN_OFF]
+    mov edx, eax
+    call utf8_step_fwd              ; nunca no meio de sequência (fix #33)
     mov [edit_cursor], rax
     call col_of_cursor
     mov [edit_goal], rax
 .ret:
+    add rsp, 8
     ret
 
 ; coll_cur — eax = k (libsel-3) com rdi = base do nome; eax=-1 se inválido.
@@ -2343,6 +3621,7 @@ coll_cur:
 
 ; coll_snapshot — nome atual -> coll_backup/blen, cursor=fim. eax 1/0.
 coll_snapshot:
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
     call coll_cur
     cmp eax, 0
     jl .bad
@@ -2359,18 +3638,20 @@ coll_snapshot:
     mov rax, [coll_blen]
     mov [coll_cursor], rax
     mov eax, 1
+    add rsp, 8
     ret
 .bad:
     xor eax, eax
+    add rsp, 8
     ret
 
 ; title_insert(al=char) — insere no título (cap 95). Edição ao vivo no rec
 ; (cancel restaura via title_backup).
 title_insert:
     push rbx
-    sub rsp, 8
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
     mov dl, al
-    call cur_rec
+    call resolve_rec
     test eax, eax
     jz .ret
     mov eax, [rbx+REC_TLEN_OFF]
@@ -2402,45 +3683,51 @@ title_insert:
     mov edx, m_notitle_len
     call set_msg
 .ret:
-    add rsp, 8
     pop rbx
     ret
 
 ; title_backspace — apaga antes do cursor do título
 title_backspace:
     push rbx
-    sub rsp, 8
-    call cur_rec
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [title_cursor]
     test rax, rax
     jz .ret
-    dec rax
-    mov [title_cursor], rax
+    mov r10, rax
     lea rdi, [rbx+REC_TITLE_OFF]
+    mov edx, eax
+    call utf8_step_back             ; (fix #33)
+    mov [title_cursor], rax
+    sub r10, rax
     mov rcx, rax
+    mov rsi, rax
+    add rsi, r10
     mov edx, [rbx+REC_TLEN_OFF]
-.mv: cmp rcx, rdx
+.mv: cmp rsi, rdx
     jae .mvout
-    mov r10b, [rdi+rcx+1]
-    mov [rdi+rcx], r10b
+    mov r11b, [rdi+rsi]
+    mov [rdi+rcx], r11b
+    inc rsi
     inc rcx
     jmp .mv
 .mvout:
-    dec dword [rbx+REC_TLEN_OFF]
+    mov eax, [rbx+REC_TLEN_OFF]
+    sub eax, r10d                   ; L - nbytes
+    mov [rbx+REC_TLEN_OFF], eax
     mov eax, [rbx+REC_TLEN_OFF]
     mov byte [rdi+rax], 0
 .ret:
-    add rsp, 8
     pop rbx
     ret
 
 ; title_delfwd — apaga sob o cursor do título
 title_delfwd:
     push rbx
-    sub rsp, 8
-    call cur_rec
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [title_cursor]
@@ -2448,45 +3735,62 @@ title_delfwd:
     cmp rax, rdx
     jae .ret
     lea rdi, [rbx+REC_TITLE_OFF]
-    mov rcx, rax
-.mv: cmp rcx, rdx
+    mov esi, edx
+    mov edx, eax
+    call utf8_step_fwd              ; fim da sequência (fix #33)
+    mov r10d, eax                   ; F
+    mov ecx, [title_cursor]         ; C
+    mov esi, r10d                   ; src=F
+    mov edx, [rbx+REC_TLEN_OFF]     ; L
+.mv: cmp esi, edx
     jae .mvout
-    mov r10b, [rdi+rcx+1]
-    mov [rdi+rcx], r10b
+    mov r11b, [rdi+rsi]
+    mov [rdi+rcx], r11b
+    inc rsi
     inc rcx
     jmp .mv
 .mvout:
-    dec dword [rbx+REC_TLEN_OFF]
     mov eax, [rbx+REC_TLEN_OFF]
+    sub eax, r10d
+    add eax, ecx
+    mov [rbx+REC_TLEN_OFF], eax
     mov byte [rdi+rax], 0
 .ret:
-    add rsp, 8
     pop rbx
     ret
 
 ; title_left / title_right
 title_left:
-    call cur_rec
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [title_cursor]
     test rax, rax
     jz .ret
-    dec rax
+    lea rdi, [rbx+REC_TITLE_OFF]
+    mov edx, eax
+    call utf8_step_back             ; (fix #33)
     mov [title_cursor], rax
 .ret:
+    add rsp, 8
     ret
 
 title_right:
-    call cur_rec
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [title_cursor]
     cmp eax, [rbx+REC_TLEN_OFF]
     jae .ret
-    inc rax
+    lea rdi, [rbx+REC_TITLE_OFF]
+    mov esi, [rbx+REC_TLEN_OFF]
+    mov edx, eax
+    call utf8_step_fwd              ; (fix #33)
     mov [title_cursor], rax
 .ret:
+    add rsp, 8
     ret
 
 ; coll_insert(al=char) — insere no nome da coll (cap 63). Ao vivo em coll_names.
@@ -2533,6 +3837,7 @@ coll_insert:
 
 ; coll_backspace — apaga antes do cursor do nome
 coll_backspace:
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
     call coll_cur
     cmp eax, 0
     jl .ret
@@ -2540,24 +3845,35 @@ coll_backspace:
     mov rax, [coll_cursor]
     test rax, rax
     jz .ret
-    dec rax
+    mov r10, rax                    ; cursor
+    mov edx, eax
+    call utf8_step_back             ; rdi=base de coll_cur (fix #33)
     mov [coll_cursor], rax
+    sub r10, rax                    ; nbytes
+    mov rcx, rax
+    mov rsi, rax
+    add rsi, r10
     mov ecx, [coll_lens+r11*4]
-.mv: cmp rax, rcx
+    mov edx, ecx
+.mv: cmp rsi, rdx
     jae .mvout
-    mov r10b, [rdi+rax+1]
-    mov [rdi+rax], r10b
-    inc rax
+    mov r9b, [rdi+rsi]
+    mov [rdi+rcx], r9b
+    inc rsi
+    inc rcx
     jmp .mv
 .mvout:
-    dec dword [coll_lens+r11*4]
-    mov ecx, [coll_lens+r11*4]
-    mov byte [rdi+rcx], 0
+    mov eax, [coll_lens+r11*4]
+    sub eax, r10d
+    mov [coll_lens+r11*4], eax
+    mov byte [rdi+rax], 0
 .ret:
+    add rsp, 8
     ret
 
 ; coll_delfwd — apaga sob o cursor do nome
 coll_delfwd:
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
     call coll_cur
     cmp eax, 0
     jl .ret
@@ -2566,33 +3882,48 @@ coll_delfwd:
     mov ecx, [coll_lens+r11*4]
     cmp rax, rcx
     jae .ret
-.mv: cmp rax, rcx
+    mov esi, ecx
+    mov edx, eax
+    call utf8_step_fwd              ; F (fix #33; rdi=base, r11 intacto)
+    mov r10d, eax
+    mov ecx, [coll_cursor]
+    mov esi, r10d
+    mov edx, [coll_lens+r11*4]
+.mv: cmp esi, edx
     jae .mvout
-    mov r10b, [rdi+rax+1]
-    mov [rdi+rax], r10b
-    inc rax
+    mov r9b, [rdi+rsi]
+    mov [rdi+rcx], r9b
+    inc rsi
+    inc rcx
     jmp .mv
 .mvout:
-    dec dword [coll_lens+r11*4]
-    mov ecx, [coll_lens+r11*4]
-    mov byte [rdi+rcx], 0
+    mov eax, [coll_lens+r11*4]
+    sub eax, r10d
+    add eax, ecx
+    mov [coll_lens+r11*4], eax
+    mov byte [rdi+rax], 0
 .ret:
+    add rsp, 8
     ret
 
 ; coll_left / coll_right
 coll_left:
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
     call coll_cur
     cmp eax, 0
     jl .ret
     mov rax, [coll_cursor]
     test rax, rax
     jz .ret
-    dec rax
+    mov edx, eax
+    call utf8_step_back             ; rdi=base (fix #33)
     mov [coll_cursor], rax
 .ret:
+    add rsp, 8
     ret
 
 coll_right:
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
     call coll_cur
     cmp eax, 0
     jl .ret
@@ -2600,26 +3931,60 @@ coll_right:
     mov rax, [coll_cursor]
     cmp eax, [coll_lens+r11*4]
     jae .ret
-    inc rax
+    mov esi, [coll_lens+r11*4]
+    mov edx, eax
+    call utf8_step_fwd              ; rdi=base (fix #33)
     mov [coll_cursor], rax
 .ret:
+    add rsp, 8
     ret
 
-; coll_commit_save — sai do modo 3 + db_save + msg
+; coll_commit_save — db_save + sai do modo 3 + msg. Em falha, restaura e
+; mantém o editor aberto para retry (sem duplicar mutação).
+; Preserva r12 (callee-saved; era clobberado — fix #19).
 coll_commit_save:
+    push r12
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok
     call coll_cur
     cmp eax, 0
     jl .ret
+    call db_snapshot wrt ..plt
+    call db_save wrt ..plt
+    cmp rax, 0
+    jl .cfail
+    mov r12, rax
     mov qword [edit_mode], 0
-    call do_save
+    mov qword [creating_coll], -1     ; criação commitada (fix #26)
+    lea rsi, [m_saved]
+    mov edx, m_saved_len
+    call set_msg
+    mov eax, r12d
+    lea rdi, [ibuf]
+    call itoa
+    lea rsi, [ibuf]
+    mov edx, eax
+    call append_msg
+    jmp .ret
+.cfail:
+    call db_restore wrt ..plt
+    mov rax, [coll_blen]
+    mov [coll_cursor], rax
+    lea rsi, [m_fail]
+    mov edx, m_fail_len
+    call set_msg
 .ret:
+    pop r12
     ret
 
-; coll_cancel — restaura nome do backup + sai do modo 3
+; coll_cancel — restaura nome do backup + sai do modo 3.
+; Em criação (Ctrl+G sem commit), remove a coleção (fix #26).
 coll_cancel:
+    sub rsp, 8                      ; sem pushes: alinha p/ calls (fix #19)
     call coll_cur
     cmp eax, 0
     jl .out
+    cmp rax, [creating_coll]        ; rax limpo (coll_cur sempre via mov eax)
+    je .unmake
     mov r11d, eax
     mov ecx, [coll_blen]
     mov [coll_lens+r11*4], ecx
@@ -2635,13 +4000,73 @@ coll_cancel:
     lea rsi, [m_cancel]
     mov edx, m_cancel_len
     call set_msg
+    add rsp, 8
+    ret
+.unmake:
+    ; Esc descartou a criação: compacta names/lens/ids/cats após k.
+    ; A coleção nova não tem membros (assign exige modo 4), sem unfile.
+    mov r11d, eax                   ; k (rep movsb só mexe rcx/rsi/rdi)
+    mov eax, [coll_count]
+    dec eax
+    cmp eax, r11d
+    jbe .c_countdec                 ; k é a última: sem mover
+    sub eax, r11d                   ; n a mover
+    mov ecx, eax
+    imul ecx, ecx, COLL_NAME_LEN
+    mov eax, r11d
+    imul eax, eax, COLL_NAME_LEN
+    lea rdi, [coll_names+rax]
+    lea rsi, [rdi+COLL_NAME_LEN]
+    rep movsb
+    mov eax, [coll_count]
+    dec eax
+    sub eax, r11d
+    mov ecx, eax
+    imul ecx, ecx, 4
+    lea rdi, [coll_lens+r11*4]
+    lea rsi, [rdi+4]
+    rep movsb
+    mov eax, [coll_count]
+    dec eax
+    sub eax, r11d
+    mov ecx, eax
+    imul ecx, ecx, COLL_ID_LEN
+    mov eax, r11d
+    imul eax, eax, COLL_ID_LEN
+    lea rdi, [coll_ids+rax]
+    lea rsi, [rdi+COLL_ID_LEN]
+    rep movsb
+    mov eax, [coll_count]
+    dec eax
+    sub eax, r11d
+    mov ecx, eax                    ; n (qwords, não bytes!) p/ rep movsq
+    lea rdi, [coll_cats+r11*8]
+    lea rsi, [rdi+8]
+    rep movsq
+.c_countdec:
+    dec qword [coll_count]
+    mov qword [creating_coll], -1
+    mov qword [edit_mode], 0
+    ; libsel apontava p/ a removida? volta p/ todos
+    mov rax, [libsel]
+    sub rax, 3
+    cmp eax, r11d
+    jne .c_nolib
+    mov qword [libsel], 0
+.c_nolib:
+    mov qword [sel], 0
+    mov qword [scroll], 0
+    lea rsi, [m_unmade]
+    mov edx, m_unmade_len
+    call set_msg
+    add rsp, 8
     ret
 
 ; edit_delfwd — apaga char sob o cursor do código (tecla Delete)
 edit_delfwd:
     push rbx
-    sub rsp, 8
-    call cur_rec
+    ; 1 push: entrada rsp%16==8 -> 0: calls ok (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [edit_cursor]
@@ -2649,22 +4074,56 @@ edit_delfwd:
     cmp rax, rdx
     jae .ret
     lea rdi, [rbx+REC_CODE_OFF]
-    mov rcx, rax
-.mv: cmp rcx, rdx
+    mov esi, edx
+    call utf8_step_fwd              ; fim da sequência sob o cursor (#33)
+    mov r10, rax                    ; r10 = fim (src da cópia)
+    mov rcx, [edit_cursor]          ; dst
+    mov rsi, r10
+    mov edx, [rbx+REC_CLEN_OFF]
+.mv: cmp rsi, rdx
     jae .mvout
-    mov r10b, [rdi+rcx+1]
-    mov [rdi+rcx], r10b
+    mov r11b, [rdi+rsi]
+    mov [rdi+rcx], r11b
+    inc rsi
     inc rcx
     jmp .mv
 .mvout:
-    dec dword [rbx+REC_CLEN_OFF]
+    mov ecx, [edit_cursor]          ; dword (cursor < 4KB)
     mov eax, [rbx+REC_CLEN_OFF]
+    sub eax, r10d                   ; L - F
+    add eax, ecx                    ; + C = L - nbytes
+    mov [rbx+REC_CLEN_OFF], eax
     mov byte [rdi+rax], 0
     call col_of_cursor
     mov [edit_goal], rax
     call ensure_vis
 .ret:
-    add rsp, 8
+    pop rbx
+    ret
+
+; land_goal(r12d=início da linha, abs) — edit_cursor = start + byteoffset
+; da coluna-alvo (edit_goal, em CARACTERES). Up/Down nunca param no meio
+; de sequência UTF-8 (fix #37). Preserva rbx/r12/r13.
+land_goal:
+    push rbx                      ; alinha p/ calls + preserva rec
+    mov r10d, r12d
+    mov eax, r12d
+    call linelen                    ; eax = byte len da linha
+    mov r11d, eax
+    lea rsi, [rbx+REC_CODE_OFF]
+    add rsi, r10
+    mov ecx, eax
+    call charcount                  ; eax = char len da linha
+    mov ecx, [edit_goal]
+    cmp ecx, eax
+    cmova ecx, eax                  ; goal clampado (dword, goal < 4KB)
+    lea rsi, [rbx+REC_CODE_OFF]
+    add rsi, r10
+    mov edx, ecx
+    mov ecx, r11d
+    call bytecol                    ; eax = byte offset
+    add eax, r10d
+    mov [edit_cursor], rax
     pop rbx
     ret
 
@@ -2672,7 +4131,9 @@ edit_delfwd:
 edit_up:
     push r12
     push r13
-    call cur_rec
+    sub rsp, 8
+    ; 2 pushes + sub 8: entrada rsp%16==8 -> 0: calls ok (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [edit_cursor]
@@ -2681,19 +4142,14 @@ edit_up:
     jz .top
     call prev_start
     mov r12d, eax
-    call linelen
-    mov ecx, [edit_goal]
-    cmp ecx, eax
-    cmova ecx, eax
-    mov eax, r12d
-    add eax, ecx
-    mov [edit_cursor], rax
+    call land_goal
     call ensure_vis
     jmp .ret
 .top:
     mov qword [edit_cursor], 0
     mov qword [edit_goal], 0
 .ret:
+    add rsp, 8
     pop r13
     pop r12
     ret
@@ -2701,7 +4157,9 @@ edit_up:
 edit_down:
     push r12
     push r13
-    call cur_rec
+    sub rsp, 8
+    ; 2 pushes + sub 8: entrada rsp%16==8 -> 0: calls ok (fix #19)
+    call resolve_rec
     test eax, eax
     jz .ret
     mov rax, [edit_cursor]
@@ -2728,26 +4186,40 @@ edit_down:
     jmp .ret
 .gotns:
     mov r12d, eax
-    call linelen
-    mov ecx, [edit_goal]
-    cmp ecx, eax
-    cmova ecx, eax
-    mov eax, r12d
-    add eax, ecx
-    mov [edit_cursor], rax
+    call land_goal
     call ensure_vis
 .ret:
+    add rsp, 8
     pop r13
     pop r12
     ret
 
+; leave_edit_commit — sai da edição por clique fora (sidebar/lista) comitando.
+; Modos 1/2/5/6/7 -> edit_commit_save; modo 3 (renomear coleção) ->
+; coll_commit_save. O modo 4 (seletor) não chega aqui. Em falha de save o
+; modo permanece (edit_commit_save não zera edit_mode no erro).
+leave_edit_commit:
+    sub rsp, 8                      ; alinha p/ o call (fix #19)
+    cmp qword [edit_mode], 3
+    je .coll
+    call edit_commit_save
+    add rsp, 8
+    ret
+.coll:
+    call coll_commit_save
+    add rsp, 8
+    ret
+
 ; edit_commit_save — push versions + updatedAt + sai do edit + db_save + msg
+; Preserva rbx,r12 (callee-saved, fix #19). 2 pushes + sub 8: calls alinhados.
 edit_commit_save:
     push rbx
+    push r12
     sub rsp, 8
-    call cur_rec
+    call resolve_rec
     test eax, eax
     jz .ret
+    call db_snapshot wrt ..plt
     ; language vazia -> "plaintext" (default do web)
     cmp dword [rbx+REC_LLEN_OFF], 0
     jne .langok
@@ -2758,10 +4230,65 @@ edit_commit_save:
     mov byte [rdi], 0
     mov dword [rbx+REC_LLEN_OFF], t_plain_len
 .langok:
-    mov eax, 201                    ; sys_time (clobber rcx,r11 — mortos)
-    xor edi, edi
-    syscall
-    mov r10, rax                    ; epoch
+    ; fix #21: versiona SÓ se o código mudou (len+bytes vs backup). Título/
+    ; lang/tags iguais também não salvam nada (.nochange). Metadados reais
+    ; atualizam updatedAt e salvam sem empurrar versão (.metachange).
+    mov eax, [rbx+REC_CLEN_OFF]
+    cmp eax, [backup_len]
+    jne .codechanged
+    lea rdi, [rbx+REC_CODE_OFF]
+    lea rsi, [edit_backup]
+    mov edx, eax
+    call j_memeq wrt ..plt
+    test eax, eax
+    jnz .codechanged
+    ; código igual: compara os 3 metadados com os snapshots do begin_edit
+    mov eax, [rbx+REC_TLEN_OFF]
+    cmp eax, [title_blen]
+    jne .metachange
+    lea rdi, [rbx+REC_TITLE_OFF]
+    lea rsi, [title_backup]
+    mov edx, eax
+    call j_memeq wrt ..plt
+    test eax, eax
+    jnz .metachange
+    mov eax, [rbx+REC_LLEN_OFF]
+    cmp eax, [lang_blen]
+    jne .metachange
+    lea rdi, [rbx+REC_LANG_OFF]
+    lea rsi, [lang_backup]
+    mov edx, eax
+    call j_memeq wrt ..plt
+    test eax, eax
+    jnz .metachange
+    mov eax, [rbx+REC_GLEN_OFF]
+    cmp eax, [tags_blen]
+    jne .metachange
+    lea rdi, [rbx+REC_TAGS_OFF]
+    lea rsi, [tags_backup]
+    mov edx, eax
+    call j_memeq wrt ..plt
+    test eax, eax
+    jnz .metachange
+    mov eax, [desc_len]
+    cmp eax, [desc_blen]
+    jne .metachange
+    lea rdi, [rbx+REC_DESC_OFF]
+    lea rsi, [desc_backup]
+    mov edx, eax
+    call j_memeq wrt ..plt
+    test eax, eax
+    jnz .metachange
+    ; nada mudou: sai do edit sem save (sem versão duplicada, sem evict)
+    mov qword [edit_mode], 0
+    mov qword [creating_sn], -1       ; criação sem conteúdo: assume o rec vazio
+    lea rsi, [m_nochange]
+    mov edx, m_nochange_len
+    call set_msg
+    jmp .ret
+.codechanged:
+    call now_ms wrt ..plt             ; ms Unix (fix #18); preserva rbx
+    mov r10, rax                    ; epoch-ms
     ; shift versions i=min(vnum,7)..1
     mov eax, [rbx+REC_VNUM_OFF]
     cmp eax, 7
@@ -2784,7 +4311,7 @@ edit_commit_save:
     dec ecx
     jnz .sh
 .noshift:
-    ; entry0 = backup (cap 2047) + at
+    ; entry0 = backup (cap cheia: revisão nativa completa, fix #22) + at
     lea rsi, [edit_backup]
     lea rdi, [rbx+REC_VERS_OFF]
     mov eax, [backup_len]
@@ -2796,7 +4323,9 @@ edit_commit_save:
     rep movsb
 .vnon:
     mov byte [rdi], 0
-    mov [rbx+REC_VERS_OFF+2048], r10
+    mov [rbx+REC_VERS_OFF+VER_AT_OFF], r10
+    lea rdi, [rbx+REC_VERS_OFF+VER_NOTE_OFF]
+    mov byte [rdi], 0               ; nota vazia (slot reciclado pode ter lixo)
     mov eax, [rbx+REC_VNUM_OFF]
     inc eax
     mov edx, MAX_VERSIONS
@@ -2804,10 +4333,37 @@ edit_commit_save:
     cmova eax, edx
     mov [rbx+REC_VNUM_OFF], eax
     mov [rbx+REC_UPDATED_OFF], r10
+    jmp .dosave
+.metachange:
+    ; só metadados: sem shift/push de versão, mas carimba e persiste
+    call now_ms wrt ..plt
+    mov [rbx+REC_UPDATED_OFF], rax
+    mov r10, rax
+.dosave:
+    call db_save wrt ..plt
+    cmp rax, 0
+    jl .cfail
+    mov r12, rax
     mov qword [edit_mode], 0
-    call do_save
+    mov qword [creating_sn], -1       ; criação commitada: Esc futuro não remove
+    lea rsi, [m_saved]
+    mov edx, m_saved_len
+    call set_msg
+    mov eax, r12d
+    lea rdi, [ibuf]
+    call itoa
+    lea rsi, [ibuf]
+    mov edx, eax
+    call append_msg
+    jmp .ret
+.cfail:
+    call db_restore wrt ..plt
+    lea rsi, [m_fail]
+    mov edx, m_fail_len
+    call set_msg
 .ret:
     add rsp, 8
+    pop r12
     pop rbx
     ret
 
@@ -2917,6 +4473,18 @@ match_rec:
     call contains_ci
     test eax, eax
     jnz .yes
+    ; descrição (fix #32, paridade com a busca global do web): sem célula de
+    ; len no rec — strlen_cap (≤511B). Recarrega a agulha (edx era o cap).
+    lea rsi, [rbx+REC_DESC_OFF]
+    mov edx, REC_DESC_LEN
+    call strlen_cap wrt ..plt
+    mov esi, eax
+    lea rdi, [rbx+REC_DESC_OFF]
+    lea rdx, [qbuf]
+    mov ecx, [qlen]
+    call contains_ci
+    test eax, eax
+    jnz .yes
 .no:
     xor eax, eax
     pop rbp
@@ -2962,27 +4530,221 @@ filter_rebuild:
     pop rbp
     ret
 
-; itoa(eax=u32, rdi=buf[>=12]) — decimal sem NUL; retorna eax=len
-; Leaf (sem calls): usa r8/r9/caller-saved livremente.
+; id_sn_taken(rsi=candidate, ecx=len) — eax 1 se o ID já existe.
+; 4 pushes + sub 8: calls alinhados (fix #19).
+id_sn_taken:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 8
+    mov r12, rsi
+    mov r13d, ecx
+    xor r10d, r10d
+.loop:
+    mov rax, [sn_count]
+    mov rdx, MAX_SNIPPETS
+    cmp rax, rdx
+    cmova rax, rdx
+    cmp r10, rax
+    jae .free
+    mov rax, r10
+    imul rax, rax, REC_SIZE
+    lea rbx, [sn_recs+rax]
+    lea rsi, [rbx+REC_ID_OFF]
+    mov edx, REC_ID_LEN
+    call strlen_cap wrt ..plt
+    cmp eax, r13d
+    jne .next
+    lea rsi, [rbx+REC_ID_OFF]
+    mov rdi, r12
+    mov edx, r13d
+    call j_memeq wrt ..plt
+    test eax, eax
+    jz .taken
+.next:
+    inc r10
+    jmp .loop
+.free:
+    xor eax, eax
+    jmp .ret
+.taken:
+    mov eax, 1
+.ret:
+    add rsp, 8
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; id_coll_taken(rsi=candidate, ecx=len) — eax 1 se o ID já existe.
+id_coll_taken:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r11
+    mov r12, rsi
+    mov r13d, ecx
+    xor r10d, r10d
+.loop:
+    mov rax, [coll_count]
+    mov rdx, MAX_COLLS
+    cmp rax, rdx
+    cmova rax, rdx
+    cmp r10, rax
+    jae .free
+    mov rax, r10
+    imul rax, rax, COLL_ID_LEN
+    lea r11, [coll_ids+rax]
+    mov rsi, r11
+    mov edx, COLL_ID_LEN
+    call strlen_cap wrt ..plt
+    cmp eax, r13d
+    jne .next
+    mov rsi, r11
+    mov rdi, r12
+    mov edx, r13d
+    call j_memeq wrt ..plt
+    test eax, eax
+    jz .taken
+.next:
+    inc r10
+    jmp .loop
+.free:
+    xor eax, eax
+    jmp .ret
+.taken:
+    mov eax, 1
+.ret:
+    pop r11
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; id_stamp — r12=epoch-ms u64, r13=pid. now_ms preserva r12/r13 do caller?
+; NÃO: now_ms usa r8/r9 internos mas preserva r12/r13? now_ms salva só
+; rsi/rdx/r8/r9/r11 — r12/r13 do CALLER sobrevivem (não tocados). Aqui r12/r13
+; são SAÍDA, então sem conflito. getpid suja só rax/rcx/r11.
+id_stamp:
+    sub rsp, 8                        ; alinha p/ call (fix #19; só GP/scratch)
+    call now_ms wrt ..plt             ; ms Unix (fix #18; granularidade p/ ids)
+    mov r12, rax
+    mov eax, 39                     ; sys_getpid
+    syscall
+    mov r13, rax
+    add rsp, 8
+    ret
+
+; make_unique_id(rdi=dst, al=prefix, r10=taken_fn) — eax=len com NUL.
+; Formato curto e único: P-epoch-pid-seq, com retry na colisão.
+make_unique_id:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 8
+    ; 8 pushes (64B) + sub 8: na entrada rsp%16==8 -> agora 0: calls ok (fix #19)
+    mov rbx, rdi
+    mov [rbx], al
+    mov byte [rbx+1], '-'
+    call id_stamp
+.next:
+    inc qword [id_seq]
+    mov r14, [id_seq]
+    lea rdi, [id_tmp]
+    mov rax, r12
+    call itoa
+    mov r15d, eax
+    mov byte [id_tmp+r15], '-'
+    inc r15d
+    lea rdi, [id_tmp+r15]
+    mov rax, r13
+    call itoa
+    add r15d, eax
+    mov byte [id_tmp+r15], '-'
+    inc r15d
+    lea rdi, [id_tmp+r15]
+    mov rax, r14
+    call itoa
+    add r15d, eax
+    lea rsi, [id_tmp]
+    mov ecx, r15d
+    call r10
+    test eax, eax
+    jnz .next
+    lea rsi, [id_tmp]
+    lea rdi, [rbx+2]
+    mov ecx, r15d
+    rep movsb
+    mov byte [rdi], 0
+    mov eax, r15d
+    add eax, 2
+    add rsp, 8
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop rbx
+    pop rbp
+    ret
+
+; make_sn_id(rdi=dst) — eax=len com NUL; único entre snippets.
+make_sn_id:
+    push rbp
+    mov rbp, rsp
+    lea r10, [id_sn_taken]
+    mov al, 'n'
+    call make_unique_id
+    pop rbp
+    ret
+
+; make_coll_id(rdi=dst) — eax=len com NUL; único entre coleções.
+make_coll_id:
+    push rbp
+    mov rbp, rsp
+    lea r10, [id_coll_taken]
+    mov al, 'c'
+    call make_unique_id
+    pop rbp
+    ret
+
+; itoa(rax=u64, rdi=buf[>=20]) — decimal sem NUL; retorna eax=len
+; Leaf (sem calls): preserva rbx; usa r8/r9/caller-saved livremente.
+; 64 bits (fix #18): timestamps em ms (~1.7e12) excedem u32; valores de 32 bits
+; continuam convertendo igual (upper zerado).
 itoa:
     push rbp
     mov rbp, rsp
+    push rbx
     mov r8, rdi                     ; r8 = buf
-    lea rcx, [rdi+16]
+    lea rcx, [rdi+20]
     mov rsi, rcx                    ; escreve de trás p/ frente
-    test eax, eax
+    test rax, rax
     jnz .loop
     dec rsi
     mov byte [rsi], '0'
     jmp .copy
 .loop:
-    mov ebx, 10
+    mov rbx, 10
     xor edx, edx
-    div ebx                         ; eax=quociente, edx=dígito
+    div rbx                         ; rax=quociente, rdx=dígito
     add dl, '0'
     dec rsi
     mov [rsi], dl
-    test eax, eax
+    test rax, rax
     jnz .loop
 .copy:
     mov r9, rcx
@@ -2999,6 +4761,7 @@ itoa:
     jnz .cp
 .done:
     mov eax, r9d
+    pop rbx
     pop rbp
     ret
 
@@ -3028,7 +4791,20 @@ ui_draw:
     dec rdx
     mov [sel], rdx
 .selok:
+    ; teto do scroll: max(filt_n-ROWS_VISIBLE,0) — sem ele, filtro que encolhe
+    ; deixa linhas em branco (fix #31); depois reaplica a visibilidade.
+    mov rcx, rax
+    sub rcx, ROWS_VISIBLE
+    jae .capok
+    xor ecx, ecx
+.capok:
+    mov rdx, [scroll]
+    cmp rdx, rcx
+    jbe .vis
+    mov [scroll], rcx
+.vis:
     mov rcx, [scroll]
+    mov rdx, [sel]
     cmp rdx, rcx
     jae .scrok
     mov [scroll], rdx
@@ -3053,8 +4829,10 @@ ui_draw:
     ; --- fundo + moldura ---
     FILL 0, 0, 1280, 800, C_BG
     FILL 0, 0, 1280, 36, C_PANEL
-    FILL 0, 772, 1280, 28, C_PANEL
-    FILL 0, 36, 240, 736, C_PANEL
+    FILL 0, 36, 1280, 1, C_BORDER
+    FILL 0, 764, 1280, 36, C_PANEL
+    FILL 0, 763, 1280, 1, C_BORDER
+    FILL 0, 36, 240, 727, C_PANEL
     ; destaque da sidebar: no modo 4 mostra o cursor do seletor
     ; (0=Unfiled y=126; 1+k -> y=194+28k), senão o filtro libsel
     cmp qword [edit_mode], 4
@@ -3081,20 +4859,28 @@ ui_draw:
     imul eax, eax, 28
     add eax, 70
 .sbdraw:
-    mov edi, 0
-    mov esi, eax
-    mov edx, 240
+    mov r12d, eax
+    mov edi, 4
+    mov esi, r12d
+    mov edx, 232
     mov ecx, 28
     mov r8d, C_SEL
     call platform_fill_rect wrt ..plt
+    mov edi, 4
+    mov esi, r12d
+    mov edx, 2
+    mov ecx, 28
+    mov r8d, C_ACCENT
+    call platform_fill_rect wrt ..plt
     FILL 253, 48, 335, 30, C_BOX
-    FILL 240, 36, 1, 736, C_BORDER
-    FILL 600, 36, 1, 736, C_BORDER
-    FILL 621, 106, 639, 1, C_BORDER
+    FILL 253, 48, 335, 1, C_BORDER
+    FILL 253, 77, 335, 1, C_BORDER
+    FILL 253, 48, 1, 30, C_BORDER
+    FILL 587, 48, 1, 30, C_BORDER
+    FILL 240, 36, 1, 727, C_BORDER
+    FILL 600, 36, 1, 727, C_BORDER
+    FILL 621, 123, 639, 1, C_BORDER
 
-    DTEXT 16, 23, C_TEXT, t_title
-    ; dica única no topo (os comandos ficam na tabela do Ctrl+H)
-    DTEXT 1129, 23, C_DIM, t_helpkey
 .hintdone:
     DTEXT 16, 60, C_DIM, t_library
     DTEXT 16, 90, C_TEXT, t_all
@@ -3140,12 +4926,17 @@ ui_draw:
     jbe .kcur
     mov eax, 23
 .kcur:
+    mov ecx, eax                    ; caret em CÉLULAS (fix #37)
+    mov eax, r14d
+    imul eax, eax, COLL_NAME_LEN
+    lea rsi, [coll_names+rax]
+    call charcount
     imul eax, eax, 9
     add eax, 16
     mov edi, eax
     mov esi, r12d
     sub esi, 16
-    mov edx, 8
+    mov edx, 2
     mov ecx, 20
     mov r8d, C_ACCENT
     call platform_fill_rect wrt ..plt
@@ -3193,12 +4984,14 @@ ui_draw:
 .caret:
     cmp qword [q_focus], 0
     je .rows
-    mov eax, r13d                   ; caret após o texto (ou no início)
+    lea rsi, [qbuf]                 ; caret em CÉLULAS (fix #37)
+    mov ecx, r13d
+    call charcount
     imul eax, eax, 9
     add eax, 263
     mov edi, eax
     mov esi, 52
-    mov edx, 8
+    mov edx, 2
     mov ecx, 20
     mov r8d, C_ACCENT
     call platform_fill_rect wrt ..plt
@@ -3216,15 +5009,35 @@ ui_draw:
     mov r13, rax                    ; idx absoluto
     mov eax, r14d
     imul eax, eax, 58
-    add eax, 90
+    add eax, 84
     mov r15d, eax                   ; top
     cmp r13, [sel]
     jne .noselrow
-    mov edi, 241
+    cmp qword [side_focus], 0
+    jne .selrow_dim
+    mov edi, 245
     mov esi, r15d
-    mov edx, 359
-    mov ecx, 58
+    add esi, 2
+    mov edx, 351
+    mov ecx, 54
     mov r8d, C_SEL
+    call platform_fill_rect wrt ..plt
+    mov edi, 245
+    mov esi, r15d
+    add esi, 2
+    mov edx, 2
+    mov ecx, 54
+    mov r8d, C_ACCENT
+    call platform_fill_rect wrt ..plt
+    jmp .noselrow
+.selrow_dim:
+    ; sidebar com foco: seleção da lista esmaece (sem barra de acento)
+    mov edi, 245
+    mov esi, r15d
+    add esi, 2
+    mov edx, 351
+    mov ecx, 54
+    mov r8d, C_BOX
     call platform_fill_rect wrt ..plt
 .noselrow:
     movzx eax, byte [filt_idx+r13]
@@ -3234,7 +5047,7 @@ ui_draw:
     mov r13d, [rbx+REC_TLEN_OFF]
     mov edi, 261
     cmp byte [rbx+REC_FAV_OFF], 0
-    je .tcap37
+    je .tcap36
     mov esi, r15d
     add esi, 24
     mov edx, C_ACCENT
@@ -3242,16 +5055,16 @@ ui_draw:
     mov r8d, t_star_len
     call platform_draw_text wrt ..plt
     mov r13d, [rbx+REC_TLEN_OFF]
-    cmp r13d, 35
+    cmp r13d, 34
     jbe .tt2
-    mov r13d, 35
+    mov r13d, 34
 .tt2:
     mov edi, 279
     jmp .tdraw
-.tcap37:
-    cmp r13d, 37
+.tcap36:
+    cmp r13d, 36
     jbe .tdraw
-    mov r13d, 37
+    mov r13d, 36
 .tdraw:
     mov esi, r15d
     add esi, 24
@@ -3259,11 +5072,11 @@ ui_draw:
     lea rcx, [rbx+REC_TITLE_OFF]
     mov r8d, r13d
     call platform_draw_text wrt ..plt
-    ; lang (cap 18, ACCENT)
+    ; lang (cap 14: 261+14*9+27+20*9=594 não cruza o divisor 600)
     mov r13d, [rbx+REC_LLEN_OFF]
-    cmp r13d, 18
+    cmp r13d, 14
     jbe .llok
-    mov r13d, 18
+    mov r13d, 14
 .llok:
     mov edi, 261
     mov esi, r15d
@@ -3272,8 +5085,10 @@ ui_draw:
     lea rcx, [rbx+REC_LANG_OFF]
     mov r8d, r13d
     call platform_draw_text wrt ..plt
-    ; " - " + tags (cap 20)
-    mov eax, r13d
+    ; " - " + tags (cap 20): x após o lang em CÉLULAS (fix #37)
+    lea rsi, [rbx+REC_LANG_OFF]
+    mov ecx, r13d
+    call charcount
     imul eax, eax, 9
     add eax, 261
     mov r12d, eax
@@ -3303,18 +5118,37 @@ ui_draw:
 
     cmp qword [filt_n], 0
     je .empty
-    ; --- detail do selecionado ---
+    ; --- detail: usa o rec fixo durante a edição; senão o selecionado ---
+    mov rax, [edit_mode]
+    cmp rax, 1
+    je .dpin
+    cmp rax, 2
+    je .dpin
+    cmp rax, 5
+    je .dpin
+    cmp rax, 6
+    je .dpin
+    cmp rax, 7
+    je .dpin
+    jmp .dcur
+.dpin:
+    mov rbx, [edit_rec]
+    test rbx, rbx
+    jz .empty
+    jmp .ddraw
+.dcur:
     mov rax, [sel]
     movzx eax, byte [filt_idx+rax]
     imul eax, eax, REC_SIZE
     lea rbx, [sn_recs+rax]
+.ddraw:
     mov r13d, [rbx+REC_TLEN_OFF]
     cmp r13d, 70
     jbe .dtlok
     mov r13d, 70
 .dtlok:
     mov edi, 621
-    mov esi, 72
+    mov esi, 89
     mov edx, C_TEXT
     lea rcx, [rbx+REC_TITLE_OFF]
     mov r8d, r13d
@@ -3326,103 +5160,210 @@ ui_draw:
     jbe .tcok
     mov eax, 70
 .tcok:
+    mov ecx, eax                    ; caret em CÉLULAS (fix #37)
+    lea rsi, [rbx+REC_TITLE_OFF]
+    call charcount
     imul eax, eax, 9
     add eax, 621
     mov edi, eax
-    mov esi, 60
-    mov edx, 8
-    mov ecx, 20
+    mov esi, 74
+    mov edx, 2
+    mov ecx, 23
     mov r8d, C_ACCENT
     call platform_fill_rect wrt ..plt
 .tnocur:
     mov r13d, [rbx+REC_LLEN_OFF]
-    cmp r13d, 24
+    cmp r13d, LANG_DISP_MAX          ; mesma largura do hit-test/caret (#25)
     jbe .dllok
-    mov r13d, 24
+    mov r13d, LANG_DISP_MAX
 .dllok:
     mov edi, 621
-    mov esi, 94
+    mov esi, 111
     mov edx, C_ACCENT
     lea rcx, [rbx+REC_LANG_OFF]
     mov r8d, r13d
     call platform_draw_text wrt ..plt
-    mov eax, r13d
+    lea rsi, [rbx+REC_LANG_OFF]     ; x do " - " em CÉLULAS (fix #37)
+    mov ecx, r13d
+    call charcount
     imul eax, eax, 9
     add eax, 621
     mov r12d, eax
     mov edi, r12d
-    mov esi, 94
+    mov esi, 111
     mov edx, C_DIM
     lea rcx, [t_sep]
     mov r8d, t_sep_len
     call platform_draw_text wrt ..plt
     add r12d, 27
     mov r13d, [rbx+REC_GLEN_OFF]
-    cmp r13d, 40
+    cmp r13d, TAGS_DISP_MAX
     jbe .dglok
-    mov r13d, 40
+    mov r13d, TAGS_DISP_MAX
 .dglok:
     mov edi, r12d
-    mov esi, 94
+    mov esi, 111
     mov edx, C_DIM
     lea rcx, [rbx+REC_TAGS_OFF]
     mov r8d, r13d
     call platform_draw_text wrt ..plt
     cmp byte [rbx+REC_FAV_OFF], 0
-    je .curblock
-    mov eax, r13d
+    je .descrow
+    lea rsi, [rbx+REC_TAGS_OFF]     ; x do "- fav" em CÉLULAS (fix #37)
+    mov ecx, r13d
+    call charcount
     imul eax, eax, 9
     add eax, r12d
     mov edi, eax
-    mov esi, 94
+    mov esi, 111
     mov edx, C_ACCENT
     lea rcx, [t_favtag]
     mov r8d, t_favtag_len
     call platform_draw_text wrt ..plt
+.descrow:
+    ; linha da descrição (fix #32): rótulo + texto truncado em DESC_DISP_MAX.
+    ; Fonte: strlen (NUL é mantido pelos fld_* e pelo parser).
+    mov edi, DESC_LBL_X
+    mov esi, DESC_BASE_Y
+    mov edx, C_DIM
+    lea rcx, [t_desc]
+    mov r8d, t_desc_len
+    call platform_draw_text wrt ..plt
+    lea rsi, [rbx+REC_DESC_OFF]
+    mov edx, REC_DESC_LEN
+    call strlen_cap wrt ..plt
+    cmp eax, DESC_DISP_MAX
+    jbe .ddescok
+    mov eax, DESC_DISP_MAX
+.ddescok:
+    test eax, eax
+    jz .curblock
+    mov edi, DESC_TXT_X
+    mov esi, DESC_BASE_Y
+    mov edx, C_TEXT
+    lea rcx, [rbx+REC_DESC_OFF]
+    mov r8d, eax
+    call platform_draw_text wrt ..plt
 .curblock:
-    ; cursor de campo 1-linha (lang/tags): barra fina, não cobre o texto
+    ; cursor de campo 1-linha (lang/tags/desc): barra fina, não cobre o texto
     cmp qword [edit_mode], 5
     je .cur_lang
     cmp qword [edit_mode], 6
     je .cur_tags
+    cmp qword [edit_mode], 7
+    je .cur_desc
     jmp .codestart
 .cur_lang:
+    ; caret na largura EXIBIDA (fix #25): min(cursor, min(llen,24)), em CÉLULAS
     mov eax, [rbx+REC_LLEN_OFF]
+    cmp eax, LANG_DISP_MAX
+    jbe .cl_lenok
+    mov eax, LANG_DISP_MAX
+.cl_lenok:
     mov ecx, [lang_cursor]
     cmp ecx, eax
     jbe .cl_ok
     mov ecx, eax
 .cl_ok:
-    imul ecx, ecx, 9
-    add ecx, 621
-    mov r12d, ecx
+    lea rsi, [rbx+REC_LANG_OFF]     ; (fix #37)
+    call charcount
+    imul eax, eax, 9
+    add eax, 621
+    mov r12d, eax
     jmp .cur_draw
 .cur_tags:
+    ; base das tags na largura exibida do lang + coluna truncada em 36
     mov eax, [rbx+REC_LLEN_OFF]
+    cmp eax, LANG_DISP_MAX
+    jbe .ct_lenok
+    mov eax, LANG_DISP_MAX
+.ct_lenok:
+    mov ecx, eax                    ; base em CÉLULAS (fix #37)
+    lea rsi, [rbx+REC_LANG_OFF]
+    call charcount
     imul eax, eax, 9
     add eax, 648                    ; 621 + 27 (após " - ")
+    mov r11d, eax                   ; base salva (charcount não toca r11)
     mov ecx, [rbx+REC_GLEN_OFF]
+    cmp ecx, TAGS_DISP_MAX
+    jbe .ct_glok
+    mov ecx, TAGS_DISP_MAX
+.ct_glok:
     mov edx, [tags_cursor]
     cmp edx, ecx
     jbe .ct_ok
     mov edx, ecx
 .ct_ok:
-    imul edx, edx, 9
-    add eax, edx
+    mov ecx, edx
+    lea rsi, [rbx+REC_TAGS_OFF]
+    call charcount
+    imul eax, eax, 9
+    add eax, r11d
     mov r12d, eax
+    jmp .cur_draw
+.cur_desc:
+    ; caret da descrição: 675 + min(cursor, min(strlen,64)) na linha da desc
+    lea rsi, [rbx+REC_DESC_OFF]
+    mov edx, REC_DESC_LEN
+    call strlen_cap wrt ..plt
+    cmp eax, DESC_DISP_MAX
+    jbe .cd_lenok
+    mov eax, DESC_DISP_MAX
+.cd_lenok:
+    mov ecx, [desc_cursor]
+    cmp ecx, eax
+    jbe .cd_ok
+    mov ecx, eax
+.cd_ok:
+    lea rsi, [rbx+REC_DESC_OFF]     ; caret em CÉLULAS (fix #37)
+    call charcount
+    imul eax, eax, 9
+    add eax, DESC_TXT_X
+    mov edi, eax
+    mov esi, DESC_BASE_Y - 15
+    mov edx, 2
+    mov ecx, 23
+    mov r8d, C_ACCENT
+    call platform_fill_rect wrt ..plt
+    jmp .codestart
 .cur_draw:
     mov edi, r12d
-    mov esi, 82
+    mov esi, 96
     mov edx, 2
-    mov ecx, 20
+    mov ecx, 23
     mov r8d, C_ACCENT
     call platform_fill_rect wrt ..plt
 .codestart:
+    ; cartão do editor: fundo + hairline + cantoneiras de acento (2px, 14px).
+    ; Caixa: 621,171,647,552 — termina em 723 (41px de ar acima do título,
+    ; 40px abaixo da caixa), bloco centralizado na área útil 36..762.
+    FILL 621, 171, 647, 552, C_BOX
+    FILL 621, 171, 647, 1, C_ACCENT_DIM
+    FILL 621, 723, 647, 1, C_ACCENT_DIM
+    FILL 621, 171, 1, 552, C_ACCENT_DIM
+    FILL 1267, 171, 1, 552, C_ACCENT_DIM
+    ; cantoneiras: 2px de espessura, 14px de lado, cor de acento
+    FILL 621, 171, 14, 2, C_ACCENT
+    FILL 621, 171, 2, 14, C_ACCENT
+    FILL 1254, 171, 14, 2, C_ACCENT
+    FILL 1266, 171, 2, 14, C_ACCENT
+    FILL 621, 722, 14, 2, C_ACCENT
+    FILL 621, 710, 2, 14, C_ACCENT
+    FILL 1254, 722, 14, 2, C_ACCENT
+    FILL 1266, 710, 2, 14, C_ACCENT
     ; linhas de código (pula code_scroll; máx CODE_ROWS)
+    ; fix #23: scroll SÓ vale editando código (modo 1, rec fixo); detail
+    ; somente-leitura sempre rende da linha zero — sem vazar scroll entre recs.
+    ; fix #32: código começa em CODE_TOP_Y (linha da desc em 124).
     lea r12, [rbx+REC_CODE_OFF]
     mov r13d, [rbx+REC_CLEN_OFF]
-    mov r15d, 130
+    mov r15d, CODE_TOP_Y
     xor r14d, r14d
+    cmp qword [edit_mode], 1
+    je .usecroll
+    xor eax, eax
+    jmp .skipln
+.usecroll:
     mov eax, [code_scroll]
 .skipln:
     test eax, eax
@@ -3448,21 +5389,131 @@ ui_draw:
 .scan:
     cmp eax, r13d
     jae .eol
-    cmp byte [r12+rax], 10
+    mov cl, [r12+rax]
+    cmp cl, 10
     je .eol
-    cmp byte [r12+rax], 13
+    cmp cl, 13
+    jne .snext
+    ; CR: só termina linha se seguido de LF (CRLF = 1 terminador, igual à
+    ; navegação/edição que só reconhece LF — fix #24). CR solitário é char.
+    lea edx, [rax+1]
+    cmp edx, r13d
+    jae .snext
+    cmp byte [r12+rdx], 10
     je .eol
+.snext:
     inc eax
     jmp .scan
 .eol:
     mov [rsp], eax                  ; full len (sobrevive à call)
-    cmp eax, 70
+    cmp eax, 69
     jbe .dd
-    mov eax, 70
+    mov eax, 69
 .dd:
     test eax, eax
     jz .adv
-    mov edi, 621
+    cmp qword [sel_active], 0
+    je .dplain
+    cmp rbx, [sel_rec]
+    jne .dplain
+    ; sobreposição da linha com [sel_a,sel_b): até 3 trechos (antes/sel/depois)
+    lea rdx, [rbx+REC_CODE_OFF]
+    mov r10, r12
+    sub r10, rdx                   ; r10 = abs_start da linha
+    mov r11d, [rsp]                ; full len
+    add r11, r10                   ; r11 = abs_end
+    mov r8, [sel_a]
+    mov r9, [sel_b]
+    cmp r8, r9
+    jbe .dsord
+    xchg r8, r9
+.dsord:
+    cmp r11, r8
+    jbe .dplain                    ; linha inteira antes da seleção
+    cmp r10, r9
+    jae .dplain                    ; linha inteira depois da seleção
+    mov rdx, r8
+    cmp rdx, r10
+    cmovb rdx, r10                 ; rdx = max(s, abs_start)
+    sub rdx, r10                   ; off_s (coords da linha)
+    mov rcx, r9
+    cmp rcx, r11
+    cmova rcx, r11                 ; rcx = min(e, abs_end)
+    sub rcx, r10                   ; off_e
+    cmp edx, eax
+    cmova edx, eax                 ; clamp no desenhado (eax ≤ 70)
+    cmp ecx, eax
+    cmova ecx, eax
+    cmp edx, ecx
+    jae .dplain
+    mov [sel_o1], edx
+    mov [sel_o2], ecx
+    ; trecho 1: [0, o1) normal
+    test edx, edx
+    jz .dsel2
+    mov edi, 638
+    mov esi, r15d
+    mov edx, C_CODE
+    mov rcx, r12
+    mov r8d, [sel_o1]
+    call platform_draw_text wrt ..plt
+.dsel2:
+    ; fundo do trecho 2 + texto claro (x/w em CÉLULAS, fix #37)
+    lea rsi, [r12]
+    mov ecx, [sel_o1]
+    call charcount
+    imul edi, eax, 9
+    add edi, 638
+    mov esi, r15d
+    sub esi, 13
+    mov ecx, [sel_o1]
+    lea rsi, [r12+rcx]
+    mov ecx, [sel_o2]
+    sub ecx, [sel_o1]
+    call charcount
+    imul edx, eax, 9
+    mov esi, r15d                 ; y (o lea p/ charcount destruiu o esi do rect)
+    sub esi, 13
+    mov ecx, 17
+    mov r8d, C_SEL
+    call platform_fill_rect wrt ..plt
+    lea rsi, [r12]
+    mov ecx, [sel_o1]
+    call charcount
+    imul edi, eax, 9
+    add edi, 638
+    mov esi, r15d
+    mov edx, C_TEXT
+    mov ecx, [sel_o1]
+    lea rcx, [r12+rcx]
+    mov r8d, [sel_o2]
+    sub r8d, [sel_o1]
+    call platform_draw_text wrt ..plt
+    ; trecho 3: [o2, drawn) normal
+    mov eax, [rsp]
+    cmp eax, 69
+    jbe .ds3
+    mov eax, 69
+.ds3:
+    mov edx, [sel_o2]
+    cmp edx, eax
+    jae .adv
+    mov r10d, edx                   ; o2 salvo
+    mov r11d, eax                   ; drawn salvo
+    lea rsi, [r12]
+    mov ecx, edx
+    call charcount
+    imul edi, eax, 9
+    add edi, 638
+    lea rcx, [r12+r10]
+    mov esi, r15d
+    mov edx, C_CODE
+    mov r8d, r11d
+    sub r8d, r10d
+    call platform_draw_text wrt ..plt
+    jmp .adv
+.dplain:
+    mov edi, 638
     mov esi, r15d
     mov edx, C_CODE
     mov rcx, r12
@@ -3472,10 +5523,17 @@ ui_draw:
     mov eax, [rsp]
     cmp eax, r13d
     jae .nomore
-    add r12, rax
-    inc r12                         ; pula \n (ou \r)
-    sub r13d, eax
+    cmp byte [r12+rax], 13
+    jne .a1
+    add r12, 2                      ; CRLF: pula os 2 bytes
+    sub r13d, 2
+    jmp .a2
+.a1:
+    inc r12                         ; LF: pula 1
     dec r13d
+.a2:
+    add r12, rax
+    sub r13d, eax
     jmp .cnext
 .nomore:
     xor r13d, r13d
@@ -3517,42 +5575,40 @@ ui_draw:
     dec rcx
     jmp .ccback
 .ccdone:
-    mov edx, [edit_cursor]
-    sub edx, ecx
-    cmp edx, 70
+    mov r10d, eax                  ; rel (linha) salvo; charcount não toca r10
+    mov rdx, [edit_cursor]
+    sub rdx, rcx
+    lea rsi, [rsi+rcx]
+    mov ecx, edx
+    call charcount
+    cmp eax, 69
     jbe .cok70
-    mov edx, 70
+    mov eax, 69
 .cok70:
-    ; x = 621+col*9 (r12d), y = 130+rel*18 (r13d)
-    imul edx, edx, 9
-    add edx, 621
-    mov r12d, edx
+    ; x = 638+col*9 (r12d), y = TOP+rel*18 (r13d)
+    imul eax, eax, 9
+    add eax, 638
+    mov r12d, eax
+    mov eax, r10d
     imul eax, eax, 18
-    add eax, 130
+    add eax, CODE_TOP_Y
     mov r13d, eax
     mov edi, r12d
     mov esi, r13d
-    sub esi, 12
-    mov edx, 9
-    mov ecx, 15
+    sub esi, 15
+    mov edx, 2
+    mov ecx, 20
     mov r8d, C_ACCENT
     call platform_fill_rect wrt ..plt
-    ; char sob o cursor (ou nada se EOL)
-    mov rcx, [edit_cursor]
-    cmp ecx, [rbx+REC_CLEN_OFF]     ; dword (r64 leria fav/id junto)
-    jae .status
-    lea rdx, [rbx+REC_CODE_OFF]
-    cmp byte [rdx+rcx], 10
-    je .status
-    lea rcx, [rdx+rcx]
-    mov edi, r12d
-    mov esi, r13d
-    mov edx, C_BG
-    mov r8d, 1
-    call platform_draw_text wrt ..plt
     jmp .status
 .empty:
-    DTEXT 375, 430, C_DIM, t_nomatch   ; centro do painel da lista
+    DTEXT 375, 430, C_DIM, t_nomatch   ; centro da coluna (241..600): 10ch
+    cmp qword [qlen], 0
+    jne .empty_query
+    DTEXT 334, 454, C_DIM, t_emptynew  ; vista vazia: criar ajuda; limpar, não
+    jmp .status
+.empty_query:
+    DTEXT 330, 454, C_DIM, t_emptyclear ; filtro sem match: limpar resolve
 
 .status:
     ; contador "N/M" dentro da caixa da lista, no canto inferior direito.
@@ -3571,7 +5627,7 @@ ui_draw:
     imul eax, eax, 9
     mov edi, 600 - 12
     sub edi, eax                    ; alinhado à direita da coluna da lista
-    mov esi, 760                    ; acima da borda inferior (772)
+    mov esi, 750                    ; acima da borda inferior (763)
     mov edx, C_DIM
     lea rcx, [ibuf]
     mov r8d, r13d
@@ -3583,10 +5639,10 @@ ui_draw:
     jz .st_none
     cmp rax, 4
     je .st_pick
-    DTEXT 16, 791, C_ACCENT, t_edittag
+    DTEXT 16, 787, C_ACCENT, t_edittag
     jmp .st_done
 .st_pick:
-    DTEXT 16, 791, C_ACCENT, t_picktag
+    DTEXT 16, 787, C_ACCENT, t_picktag
 .st_none:
 .st_done:
     ; mensagem de ação à direita (copiado/salvo/fav)
@@ -3598,7 +5654,7 @@ ui_draw:
     mov eax, 1280 - 16
     sub eax, r12d
     mov edi, eax
-    mov esi, 791
+    mov esi, 787
     mov edx, C_ACCENT
     lea rcx, [msg_buf]
     mov r8d, [msg_len]
