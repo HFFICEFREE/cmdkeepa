@@ -44,6 +44,17 @@ Dentro do app, **`Ctrl+H`** abre esta mesma tabela.
 clicar reposiciona o cursor, e clicar fora da coluna de detalhe salva e sai
 da edição.
 
+### Build e release
+
+```bash
+./native/build.sh              # gera native/cmdkeepa (nasm + gcc -lX11)
+./native/release.sh v1.2.3     # build + strip + commit na tag + push
+```
+
+O binário fica fora do `main` (`.gitignore`); ele entra **só no commit da
+tag** de release. A tag ganha o executável pronto e o `main` segue sem ele.
+Para ensaiar: `--no-push` (não envia) ou `--dry-run` (só mostra o plano).
+
 ## Features
 
 **Core (MVP)**
