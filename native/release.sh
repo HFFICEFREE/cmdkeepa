@@ -50,7 +50,8 @@ fi
 
 echo "[release] build ($tag)"
 if [ "$dry" = 0 ]; then
-    ./native/build.sh
+    ./native/portable.sh
+    cp native/dist/cmdkeepa-linux-x86_64 native/cmdkeepa
 fi
 
 echo "[release] strip native/cmdkeepa"

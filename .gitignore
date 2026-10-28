@@ -31,5 +31,5 @@ native/cmdkeepa
 __pycache__/
 *.pyc
 
-# Pacote portátil gerado por native/bundle.sh
+# Saída do build portátil (native/portable.sh)
 native/dist/

@@ -54,32 +54,17 @@ desses dois lugares.
 ### Build e release
 
 ```bash
-./native/build.sh              # gera native/cmdkeepa (nasm + gcc -lX11)
-./native/release.sh v1.2.3     # build + strip + commit na tag + push
+./native/build.sh              # dev: binário local (glibc do host)
+./native/portable.sh           # release: compila em glibc 2.31 (Docker)
+./native/release.sh v1.2.3     # portable + commit na tag + push
 ```
 
+A release é **um único arquivo de ~51 KB**, sem libs para baixar: roda em
+qualquer Linux x86-64 com glibc ≥ 2.31 que tenha X11 (ou XWayland) e fontes.
+Xft/fontconfig/freetype são usados se existirem; sem Xft, cai na fonte core.
 O binário fica fora do `main` (`.gitignore`); ele entra **só no commit da
-tag** de release. A tag ganha o executável pronto e o `main` segue sem ele.
-Para ensaiar: `--no-push` (não envia) ou `--dry-run` (só mostra o plano).
-
-O normal é distribuir **só o binário (~51 KB)**: X11 e Xft/fontconfig/
-freetype já existem em qualquer Linux com interface gráfica, e o limite real
-de portabilidade é a glibc (≥ 2.34).
-
-O `native/bundle.sh` existe só para alvos mínimos e custa caro:
-
-```bash
-./native/bundle.sh   # native/dist/cmdkeepa-linux-x86_64{,.tar.gz}
-```
-
-3,7 MB (1,9 MB comprimido), sendo ~2,0 MB a cadeia Xft (freetype, fontconfig,
-expat, png, brotli, z/bz2) e ~1,6 MB a do X11. O pacote leva o binário stripped
-+ as libs em `lib/`, resolvidas por `$ORIGIN/lib`; **não** resolve glibc,
-servidor X nem fontes do sistema. Para anexar numa release:
-
-```bash
-gh release upload v1.0.0 native/dist/cmdkeepa-linux-x86_64.tar.gz
-```
+tag** de release. Para ensaiar: `--no-push` (não envia) ou `--dry-run` (só
+mostra o plano).
 
 ## Features
 
