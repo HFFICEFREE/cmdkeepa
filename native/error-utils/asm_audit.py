@@ -51,7 +51,11 @@ def audit(path):
             if have_entry:
                 bal = entry_bal + 8
         s = ln.strip()
-        if re.match(r"push\s+\S+", s):
+        if re.match(r"pushfq", s):
+            bal += 8  # pushfq empurra RFLAGS (8B em 64-bit, como push reg)
+        elif re.match(r"popfq", s):
+            bal -= 8
+        elif re.match(r"push\s+\S+", s):
             bal += 8
         elif re.match(r"pop\s+\S+", s):
             bal -= 8

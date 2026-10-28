@@ -44,6 +44,45 @@ static int call_linelen(char *rec, int pos) {
                  : "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "memory");
     return out;
 }
+/* wrap_rows(p, len) -> nº de faixas visuais.
+ * Chamadas com registradores pinados (+r): movs sequenciais no template
+ * destruiriam inputs ainda não lidos se o GCC os alocasse sobrepostos. */
+static int call_wrap_rows(char *p, int len) {
+    int out;
+    register char *_b asm("rsi") = p;
+    register long _c asm("rcx") = len;
+    asm volatile("call wrap_rows"
+                 : "=a"(out), "+r"(_b), "+r"(_c)
+                 : : "cc", "memory", "rdx", "rdi", "r8", "r9", "r10", "r11");
+    return out;
+}
+/* wrap_vrow(base, total, off, scroll) -> rel (eax); col (edx).
+ * off entra em edx e col sai em edx: operando único in-out (+d). */
+static int call_wrap_vrow(char *base, int total, int off, int scroll, int *col) {
+    int rel;
+    register char *_b asm("rsi") = base;
+    register long _t asm("rcx") = total;
+    register long _o asm("rdx") = off;
+    register long _s asm("r8") = scroll;
+    asm volatile("call wrap_vrow"
+                 : "=a"(rel), "+d"(_o), "+r"(_b), "+r"(_t), "+r"(_s)
+                 : : "cc", "memory", "rdi", "r9", "r10", "r11");
+    *col = (int)_o;
+    return rel;
+}
+/* wrap_vrow_off(base, total, relrow, scroll) -> line_start (eax); chunk (edx) */
+static int call_wrap_vrow_off(char *base, int total, int relrow, int scroll, int *chunk) {
+    int start;
+    register char *_b asm("rsi") = base;
+    register long _t asm("rcx") = total;
+    register long _r asm("rdx") = relrow;
+    register long _s asm("r8") = scroll;
+    asm volatile("call wrap_vrow_off"
+                 : "=a"(start), "+d"(_r), "+r"(_b), "+r"(_t), "+r"(_s)
+                 : : "cc", "memory", "rdi", "r9", "r10", "r11");
+    *chunk = (int)_r;
+    return start;
+}
 static int call_line_index(char *rec, int pos) {
     int out;
     asm volatile("call line_index" : "=a"(out) : "b"(rec), "0"(pos)
@@ -281,6 +320,174 @@ int main(void) {
         CHECK("32c ainda editando", edit_mode == 1);
         key(10);
         CHECK("32c esc saiu", edit_mode == 0); } }
+
+    /* ---------- undo por palavra/rajada (Ctrl+Z kind 27 / Ctrl+Y kind 28) -- */
+    { cp_fixture("ui-21.json", "/tmp/uu-undo.json");
+      CHECK("undo load", db_load("/tmp/uu-undo.json") == 1);
+      sel = 0; scroll = 0; qlen = 0; libsel = 0;
+      filter_rebuild();
+      begin_edit(1);
+      int c0 = clen(sn_recs);
+      edit_cursor = c0;
+      typech('A'); typech('B');          /* rajada rápida: 1 unidade */
+      CHECK("undo digitou 2", clen(sn_recs) == c0 + 2);
+      key(27);                                     /* Ctrl+Z */
+      CHECK("undo tirou a rajada", clen(sn_recs) == c0);
+      CHECK("undo cursor voltou", edit_cursor == c0);
+      key(28);                                     /* Ctrl+Y */
+      CHECK("redo pôs a rajada", clen(sn_recs) == c0 + 2);
+      usleep(1200000);                             /* pausa > BURST: quebra */
+      typech(' '); typech('C');                    /* ' ' ancora: 2 unidades */
+      CHECK("undo digitou ' C'", clen(sn_recs) == c0 + 4);
+      key(27);
+      CHECK("undo tirou 'C' (espaço fica)", clen(sn_recs) == c0 + 3);
+      key(27);
+      CHECK("undo tirou ' '", clen(sn_recs) == c0 + 2);
+      key(27);
+      CHECK("undo tirou 'AB'", clen(sn_recs) == c0);
+      typech('D'); usleep(1200000); typech('E');    /* mesma palavra, lenta */
+      CHECK("undo palavra lenta digitou", clen(sn_recs) == c0 + 2);
+      key(27);
+      CHECK("undo palavra lenta saiu inteira", clen(sn_recs) == c0);
+      /* replace por cima de seleção = 1 undo (skip do delete) */
+      key(28);                                     /* refaz 'DE' p/ ter o que trocar */
+      extern long sel_active, sel_a, sel_b, sel_rec;
+      sel_active = 1; sel_rec = (long)sn_recs; sel_a = c0; sel_b = c0 + 2;
+      edit_cursor = c0 + 2;
+      typech('Z');
+      CHECK("replace trocou", clen(sn_recs) == c0 + 1 && sn_recs[256 + c0] == 'Z');
+      key(27);
+      CHECK("replace desfez tudo de 1x", clen(sn_recs) == c0 + 2);
+      key(10);                                     /* Esc: cancela a sessão */
+      CHECK("undo esc saiu", edit_mode == 0); }
+
+    /* ---------- undo ancora em fronteira (espaço/tab/newline) ------------- */
+    { cp_fixture("ui-21.json", "/tmp/uu-undo4.json");
+      CHECK("undo4 load", db_load("/tmp/uu-undo4.json") == 1);
+      sel = 0; scroll = 0; qlen = 0; libsel = 0;
+      filter_rebuild();
+      begin_edit(1);
+      int c0 = clen(sn_recs);
+      edit_cursor = c0;
+      /* "hi you" rápido: 2 unidades ("hi ", "you") */
+      typech('h'); typech('i'); typech(' '); typech('y'); typech('o'); typech('u');
+      CHECK("undo4 digitou 'hi you'", clen(sn_recs) == c0 + 6);
+      key(27);
+      CHECK("undo4 tirou 'you' (âncora fica)",
+            clen(sn_recs) == c0 + 3 && sn_recs[256 + c0 + 2] == ' ');
+      key(27);
+      CHECK("undo4 tirou 'hi '", clen(sn_recs) == c0);
+      /* Enter ancora: "a\nb" desfaz em 2 passos */
+      typech('a'); key(9); typech('b');
+      CHECK("undo4 digitou 'a\\nb'", clen(sn_recs) == c0 + 3);
+      key(27);
+      CHECK("undo4 tirou 'b' (newline fica)",
+            clen(sn_recs) == c0 + 2 && sn_recs[256 + c0 + 1] == '\n');
+      key(27);
+      CHECK("undo4 tirou 'a\\n'", clen(sn_recs) == c0);
+      /* espaço duplo funde p/ trás: "x  y" = ["x  ", "y"] */
+      typech('x'); typech(' '); typech(' '); typech('y');
+      CHECK("undo4 digitou 'x  y'", clen(sn_recs) == c0 + 4);
+      key(27);
+      CHECK("undo4 tirou 'y'", clen(sn_recs) == c0 + 3);
+      key(27);
+      CHECK("undo4 tirou 'x  '", clen(sn_recs) == c0);
+      /* espaço após pausa longa ainda ancora na palavra anterior */
+      typech('p'); typech('q');
+      usleep(1200000);
+      typech(' '); typech('r');
+      CHECK("undo4 digitou 'pq r'", clen(sn_recs) == c0 + 4);
+      key(27);
+      CHECK("undo4 tirou 'r'", clen(sn_recs) == c0 + 3);
+      key(27);
+      CHECK("undo4 tirou 'pq '", clen(sn_recs) == c0);
+      key(10);
+      CHECK("undo4 esc saiu", edit_mode == 0); }
+
+    /* ---------- undo no título + histórico por campo ---------- */
+    { cp_fixture("ui-32.json", "/tmp/uu-undo2.json");
+      CHECK("undo2 load", db_load("/tmp/uu-undo2.json") == 2);
+      sel = 0; scroll = 0; qlen = 0; libsel = 0;
+      filter_rebuild();
+      begin_edit(2);
+      extern long title_cursor;
+      int t0; memcpy(&t0, sn_recs + 4352, 4);
+      title_cursor = t0;
+      typech('Q');
+      { int t1; memcpy(&t1, sn_recs + 4352, 4);
+        CHECK("undo2 digitou título", t1 == t0 + 1); }
+      key(17);                                     /* Tab: título -> código */
+      CHECK("undo2 tab foi p/ código", edit_mode == 1);
+      edit_cursor = clen(sn_recs);
+      typech('X');
+      int c1 = clen(sn_recs);
+      key(27);
+      CHECK("undo2 desfaz código", clen(sn_recs) == c1 - 1);
+      key(27);
+      { int t2; memcpy(&t2, sn_recs + 4352, 4);
+        CHECK("undo2 título intacto (histórico por campo)", t2 == t0 + 1); }
+      key(10);
+      CHECK("undo2 esc saiu", edit_mode == 0); }
+
+    /* ---------- undo no nome da coleção ---------- */
+    { cp_fixture("ui-21.json", "/tmp/uu-undo3.json");
+      CHECK("undo3 load", db_load("/tmp/uu-undo3.json") == 1);
+      sel = 0; scroll = 0; qlen = 0; libsel = 0;
+      filter_rebuild();
+      extern int coll_lens[];
+      extern long coll_cursor;
+      key(18);                                     /* Ctrl+G */
+      CHECK("undo3 coll editando", edit_mode == 3);
+      int k0 = coll_lens[0];
+      coll_cursor = k0;
+      typech('Z');
+      CHECK("undo3 digitou", coll_lens[0] == k0 + 1);
+      key(27);
+      CHECK("undo3 desfaz nome", coll_lens[0] == k0);
+      key(28);
+      CHECK("undo3 refaz nome", coll_lens[0] == k0 + 1);
+      key(10);
+      CHECK("undo3 esc saiu", edit_mode == 0); }
+
+    /* ---------- soft wrap: faixas visuais de 69 células ---------- */
+    { char w[256];
+      memset(w, 'a', sizeof w);
+      CHECK("wrap rows 0->1", call_wrap_rows(w, 0) == 1);
+      CHECK("wrap rows 69->1", call_wrap_rows(w, 69) == 1);
+      CHECK("wrap rows 70->2", call_wrap_rows(w, 70) == 2);
+      CHECK("wrap rows 138->2", call_wrap_rows(w, 138) == 2);
+      CHECK("wrap rows 139->3", call_wrap_rows(w, 139) == 3);
+      /* duas linhas lógicas: 70 a's + \n + 10 b's */
+      char t[256];
+      memset(t, 'a', 70); t[70] = '\n';
+      memset(t + 71, 'b', 10);
+      int tot = 81;
+      int col = -1;
+      int r = call_wrap_vrow(t, tot, 0, 0, &col);
+      CHECK("wrap vrow off0 -> (0,0)", r == 0 && col == 0);
+      r = call_wrap_vrow(t, tot, 69, 0, &col);
+      CHECK("wrap vrow off69 -> (1,0)", r == 1 && col == 0);
+      r = call_wrap_vrow(t, tot, 70, 0, &col);
+      CHECK("wrap vrow off70 (\\n) -> (1,1)", r == 1 && col == 1);
+      r = call_wrap_vrow(t, tot, 71, 0, &col);
+      CHECK("wrap vrow off71 -> (2,0)", r == 2 && col == 0);
+      r = call_wrap_vrow(t, tot, 81, 0, &col);
+      CHECK("wrap vrow fim -> (2,10)", r == 2 && col == 10);
+      r = call_wrap_vrow(t, tot, 71, 1, &col);
+      CHECK("wrap vrow scroll1 -> (0,0)", r == 0 && col == 0);
+      r = call_wrap_vrow(t, tot, 0, 1, &col);
+      CHECK("wrap vrow acima do scroll -> (-2,0)", r == -2 && col == 0);
+      int ch = -1;
+      int s = call_wrap_vrow_off(t, tot, 0, 0, &ch);
+      CHECK("wrap off faixa0 -> (0,c0)", s == 0 && ch == 0);
+      s = call_wrap_vrow_off(t, tot, 1, 0, &ch);
+      CHECK("wrap off faixa1 -> (0,c1)", s == 0 && ch == 1);
+      s = call_wrap_vrow_off(t, tot, 2, 0, &ch);
+      CHECK("wrap off faixa2 -> (71,c0)", s == 71 && ch == 0);
+      s = call_wrap_vrow_off(t, tot, 0, 1, &ch);
+      CHECK("wrap off scroll1 faixa0 -> (71,c0)", s == 71 && ch == 0);
+      s = call_wrap_vrow_off(t, tot, 5, 0, &ch);
+      CHECK("wrap off além -> fim", s == tot && ch == 0); }
 
     if (fails == 0) printf("OK uitest\n");
     else printf("FALHAS uitest: %d\n", fails);

@@ -104,6 +104,10 @@
 %define COLL_NAME_LEN 64
 %define COLL_ID_LEN   32
 %define CODE_ROWS     29
+%define CODE_WRAP     69
+; CODE_WRAP: largura visível do cartão de código em CÉLULAS (9px cada):
+; 638+69*9=1259, dentro da borda (1267). Linhas lógicas maiores quebram em
+; faixas visuais (soft wrap, só desenho — o buffer/DB não muda).
 ; largura exibida da linha "lang - tags" no detail (fix #25): render, lt_pick
 ; e carets usam estes limites, nunca o comprimento total do campo.
 ; TAGS 36: 621+24*9+27+36*9+54(fav)=1242, dentro do cartão (borda 1267).

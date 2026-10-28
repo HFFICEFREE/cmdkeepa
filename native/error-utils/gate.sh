@@ -35,7 +35,7 @@ gcc -no-pie native/error-utils/dbtest.c native/db.o -o /tmp/gate-dbtest || exit 
 /tmp/gate-dbtest || exit 1
 
 echo "== gate[6/6] uitest =="
-gcc -no-pie native/error-utils/uitest.c native/ui_f2.o native/db.o native/platform_x11.o -lX11 -o /tmp/gate-uitest || exit 1
+gcc -O2 -no-pie native/error-utils/uitest.c native/ui_f2.o native/db.o native/platform_x11.o -lX11 -o /tmp/gate-uitest || exit 1
 /tmp/gate-uitest || exit 1
 
 echo "GATE OK"

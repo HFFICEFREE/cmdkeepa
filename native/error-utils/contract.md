@@ -50,7 +50,18 @@
   15/16=del-snippet 17=tab 18=cria-coll 19=renomeia-coll 20=del-coll
   21=movecoll (snippet -> próxima coll, circula até unfiled) 22=help (Ctrl+H)
   23=button-release 24=motion (arrasto: seleção de texto no código)
-  25=paste pronto (SelectionNotify do XConvertSelection) 26=paste (Ctrl+V).
+  25=paste pronto (SelectionNotify do XConvertSelection) 26=paste (Ctrl+V)
+  27=undo (Ctrl+Z) 28=redo (Ctrl+Y): snapshot do campo em edição antes de
+  cada mutação, coalescido em unidades de palavra/rajada: mesma palavra
+  (mesmo campo, posição contígua, mesma classe) sempre funde, e classes
+  diferentes fundem se digitadas na mesma rajada (<1s entre teclas).
+  **Exceção: espaço/tab/newline são âncoras** — fundem p/ trás (ficam com a
+  palavra anterior) e selam o run (`undo_run_seal`): a próxima palavra sempre
+  abre unidade nova, mesmo na rajada. "ola mundo" desfaz em 2 Ctrl+Z ("mundo",
+  depois "ola "), nunca tudo de uma vez; Enter segue a mesma regra.
+  Delete/paste/navegação/troca de campo quebram a unidade. Digitar por cima
+  de seleção substitui (não engole o char) e desfaz em 1x; trocar de campo/
+  commit/cancel/begin_edit zera o histórico.
 - `edit_mode`: 0=normal 1=código 2=título 3=nome de coleção 4=seletor de
   coleção **5=language 6=tags**. Modos 5/6 usam helpers genéricos
   `field_setup`/`fld_*` (rdi=base, rsi=&len dword, rdx=&cursor, ecx=cap) e
@@ -111,6 +122,14 @@
 - `match_rec` combina `libsel` (0=todos 1=fav 2=unfiled 3+=coll) + query.
   `cid` vazio = unfiled; `coll_ids` são NUL-terminated; seed com `cid`
   ligado (bare run precisa filtrar — F5).
+- **Código com soft wrap (`CODE_WRAP`=69 células):** linha lógica longa ocupa
+  várias faixas visuais; o buffer/DB **não muda** (só desenho). Scroll,
+  navegação (Up/Down lógicos), seleção (offsets absolutos) e undo continuam
+  no modelo lógico; só render, caret e click passam pelas faixas via
+  `wrap_rows`/`wrap_vrow`/`wrap_vrow_off` (+`wrap_cb0/cb1`, `wrap_os/oe`,
+  `wrap_chunk` como tmp de render). Ao mexer no draw do código: redesenhe
+  por faixa, recalcule `vs/ve` por faixa, nunca assuma 1 linha = 1 faixa e
+  nunca corte sequência UTF-8 no meio (`bytecol`, não byte cru).
 
 ## 6. Filtros e estado (`filt_idx`/`filt_n`/`sel`)
 
@@ -198,7 +217,7 @@
    stash na pilha/BSS antes (`coll_insert` escrevia `0x03` — F6; `.e5_ins`
    mandava `0x01` porque `al` era `ev_kind` — F8).
 5. Load de campo `rec.inc`: largura certa? (`lint.sh`)
-6. Novo `ev_kind`: main atualizado? máscara cobre? (`kinds 2..21`)
+6. Novo `ev_kind`: main atualizado? máscara cobre? (`kinds 2..28`)
 7. Novo desenho clicável: baseline=topo+20? hit==highlight? (3 lugares)
 8. Mutação de `sn_count/qlen/libsel`: `filter_rebuild` antes do próximo uso?
 9. Novo campo persistido: NUL-terminado? emitido nas 12 chaves? `jsoncheck` passa?
@@ -229,5 +248,9 @@
     Ao salvar regs na pilha p/ um call: consumir rax (retorno) ANTES dos pops,
     e dar pop em reg MORTO — `pop rcx` após o call apagou min(col,len) e o
     cursor de click do código foi p/ 2*pos (NUL + `\n` fora do lugar no save).
+    Harness C (`uitest.c`) compila com `-O2`: shims de teste com `call`
+    escondido dentro de `asm` + locais `+r` quebram no `-O0` — o GCC mantém
+    os locais na red zone e os pushes do call escondido os clobberam
+    (hang/FAILs/crash no exit; o binário real, via `build.sh`, não é afetado).
 18. main despacha só em poll==2 (fix #34); F1 em archive/; expose só com
     count==0 (fix #36). Portão: `gate.sh` cobre #11-36.

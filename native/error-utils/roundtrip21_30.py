@@ -40,8 +40,10 @@ def sh(cmd):
 # ---------- build harnesses ----------
 r = sh("gcc -no-pie native/error-utils/dbtest.c native/db.o -o /tmp/dbtest")
 check("build dbtest", r.returncode == 0, r.stderr[-500:])
-r = sh("gcc -no-pie native/error-utils/uitest.c native/ui_f2.o native/db.o "
+r = sh("gcc -O2 -no-pie native/error-utils/uitest.c native/ui_f2.o native/db.o "
        "native/platform_x11.o -lX11 -o /tmp/uitest")
+# -O2 no harness: shims de teste com call escondido em asm + locais +r
+# quebram no -O0 (GCC mantém locais na red zone e o call clobbera).
 check("build uitest", r.returncode == 0, r.stderr[-500:])
 with open("/tmp/rt.c", "w") as f:
     f.write('extern long db_load(const char*); extern long db_save(void);\n'
@@ -103,6 +105,29 @@ check("30 latin/prop/time", "latin_buf" in plat and "mov r14, r13" in plat
       and "[p_owntime]" in plat and "[p_evtime]" in plat)
 main = open(os.path.join(NATIVE, "main.asm")).read()
 check("27 main chama shutdown no fail", "platform_shutdown" in main)
+
+# ---------- undo/redo (Ctrl+Z kind 27 / Ctrl+Y kind 28) ----------
+check("27/28 kinds no platform",
+      "mov dword [ev_kind], 27" in plat and "mov dword [ev_kind], 28" in plat)
+check("27/28 dispatch nos 3 editores",
+      src.count("je .e_undo") >= 3 and src.count("je .e_redo") >= 3)
+check("undo help rows", '"Ctrl+Z"' in src and '"Ctrl+Y"' in src
+      and "desfazer edicao" in src and "refazer edicao" in src)
+check("undo fronteira sela (ancora espaco/tab/newline)",
+      "undo_run_seal" in src and "cmp r15b, 0x20" in src
+      and "cmp r15b, 0x09" in src and "cmp r15b, 0x0A" in src)
+check("undo selo limpo ao fechar run",
+      src.count("mov qword [undo_run_seal], 0") >= 5)
+
+# ---------- soft wrap do código (CODE_WRAP=69 células) ----------
+rec = open(os.path.join(NATIVE, "rec.inc")).read()
+check("wrap CODE_WRAP=69", "%define CODE_WRAP     69" in rec)
+check("wrap helpers existem",
+      "wrap_rows:" in src and "wrap_vrow:" in src and "wrap_vrow_off:" in src)
+check("wrap caret usa wrap_vrow", "call wrap_vrow " in src)
+check("wrap click usa wrap_vrow_off", "call wrap_vrow_off" in src)
+check("wrap sem clamp 69 no render",
+      "cmp eax, 69" not in src and "mov eax, 69" not in src)
 
 print("OK: todos os checks 21-30 passaram" if not FAIL else "FALHAS: %d" % len(FAIL))
 sys.exit(1 if FAIL else 0)

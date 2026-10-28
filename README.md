@@ -27,6 +27,7 @@ Dentro do app, **`Ctrl+H`** abre esta mesma tabela.
 | `Enter` | Edita o snippet (título → código → tipo → tags → descrição) |
 | `Tab` | Próximo campo durante a edição |
 | `Ctrl+S` | Salva no banco |
+| `Ctrl+Z` / `Ctrl+Y` | Desfaz / refaz a edição (palavra a palavra: para no espaço/Enter) |
 | `Ctrl+N` | Novo snippet |
 | `Ctrl+G` | Nova coleção |
 | `Ctrl+F` | Favorita / desfavorita |

@@ -30,6 +30,7 @@ extern XDefaultScreen
 extern XRootWindow
 extern XCreateSimpleWindow
 extern XStoreName
+extern XSetClassHint
 extern XSelectInput
 extern XMapWindow
 extern XCreateGC
@@ -67,6 +68,9 @@ extern ui_draw
 
 section .data
     win_title:        db "CmdKeepa", 0
+    wm_res_name:      db "cmdkeepa", 0
+    wm_res_class:     db "CmdKeepa", 0
+    wm_class_hint:    dq wm_res_name, wm_res_class
     atom_delete_name: db "WM_DELETE_WINDOW", 0
     atom_protos_name: db "WM_PROTOCOLS", 0
     atom_clip_name:   db "CLIPBOARD", 0
@@ -260,6 +264,14 @@ platform_init:
     mov rsi, r13
     lea rdx, [win_title]
     call XStoreName wrt ..plt
+
+    ; XSetClassHint(display, window, {"cmdkeepa","CmdKeepa"}): associa a
+    ; janela ao .desktop via StartupWMClass=CmdKeepa, sem isso o dock mostra
+    ; um ícone genérico separado.
+    mov rdi, rbx
+    mov rsi, r13
+    lea rdx, [wm_class_hint]
+    call XSetClassHint wrt ..plt
 
     ; XSelectInput(display, window, INPUT_MASK)
     mov rdi, rbx
@@ -1097,6 +1109,14 @@ platform_poll:
     je .pastekey
     cmp rdx, 'V'
     je .pastekey
+    cmp rdx, 'z'
+    je .undokey
+    cmp rdx, 'Z'
+    je .undokey
+    cmp rdx, 'y'
+    je .redokey
+    cmp rdx, 'Y'
+    je .redokey
     jmp .cont
 .copy:
     mov dword [ev_kind], 5
@@ -1144,6 +1164,14 @@ platform_poll:
     jmp .done
 .pastekey:
     mov dword [ev_kind], 26
+    mov eax, 2
+    jmp .done
+.undokey:
+    mov dword [ev_kind], 27
+    mov eax, 2
+    jmp .done
+.redokey:
+    mov dword [ev_kind], 28
     mov eax, 2
     jmp .done
 .nokey:
