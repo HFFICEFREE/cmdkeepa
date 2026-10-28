@@ -62,16 +62,20 @@ O binário fica fora do `main` (`.gitignore`); ele entra **só no commit da
 tag** de release. A tag ganha o executável pronto e o `main` segue sem ele.
 Para ensaiar: `--no-push` (não envia) ou `--dry-run` (só mostra o plano).
 
-Para distribuir sem depender das libs do sistema:
+O normal é distribuir **só o binário (~51 KB)**: X11 e Xft/fontconfig/
+freetype já existem em qualquer Linux com interface gráfica, e o limite real
+de portabilidade é a glibc (≥ 2.34).
+
+O `native/bundle.sh` existe só para alvos mínimos e custa caro:
 
 ```bash
 ./native/bundle.sh   # native/dist/cmdkeepa-linux-x86_64{,.tar.gz}
 ```
 
-O pacote leva o binário stripped + as libs em `lib/` (X11, Xft, fontconfig,
-freetype e a cadeia delas), resolvidas por `$ORIGIN/lib`. **Ficam de fora:**
-glibc (≥ 2.34), servidor X (ou XWayland) e as fontes do sistema — substituir
-o libc ao lado do binário não é suportado. Para anexar numa release:
+3,7 MB (1,9 MB comprimido), sendo ~2,0 MB a cadeia Xft (freetype, fontconfig,
+expat, png, brotli, z/bz2) e ~1,6 MB a do X11. O pacote leva o binário stripped
++ as libs em `lib/`, resolvidas por `$ORIGIN/lib`; **não** resolve glibc,
+servidor X nem fontes do sistema. Para anexar numa release:
 
 ```bash
 gh release upload v1.0.0 native/dist/cmdkeepa-linux-x86_64.tar.gz
