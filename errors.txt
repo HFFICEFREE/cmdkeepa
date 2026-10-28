@@ -1,0 +1,98 @@
+ERRORS AND LESSONS FOR THE NEXT LLM
+A field manual from the native cmdkeepa assembly project
+
+Chapter 1. What this project is and why it punishes assumptions
+
+This manual comes from work on cmdkeepa, a native x86-64 NASM/X11 application with a JSON database, fixed-size in-memory records, collection handling, version history, filtering, editing, clipboard support, and web interoperability. The relevant implementation lives primarily in native/db.asm, native/ui_f2.asm, native/platform_x11.asm, native/main.asm, and native/rec.inc. The test and build helpers live in native/error-utils, especially build.sh, env.sh, run.sh, keys.py, getwid.py, jsoncheck.py, crash.sh, lint.sh, and contract.md. The audit that guided much of the work is native/ASSEMBLY_REVIEW.md.
+
+The project is unusually unforgiving because many failures are latent. The program can appear to work while corrupting stack state, preserving stale database fields, serving mutable clipboard memory, generating duplicate identifiers, or silently replacing a user database with seed data. A future model should therefore treat apparent success as weak evidence. Success is meaningful only when the current binary has been rebuilt and exercised through the real toolchain, with the real input classes, against the current sources.
+
+The local build normally requires sourcing native/error-utils/env.sh, using the project-local NASM installation, linking with gcc without PIE, linking against X11, and running UI tests under an available X display. Disposable databases and fixtures belong outside the user profile. The user database must never be used as a scratch database. Temporary and generated test files belong in a scratch area, not in the repository, unless the user explicitly asks for a repository artifact.
+
+Chapter 2. Read the repository before theorizing
+
+The first and most general mistake is to begin with a theory, framework, or test scaffold before reading the workspace. On this project, that mistake looked like producing large generic analyses and test plans before confirming the actual architecture, source files, build commands, runtime behavior, and current state of the code. Generic preparation feels productive, but it creates a false sense of understanding.
+
+The safer sequence is always the same. First inspect the working tree and repository status. Then read the build scripts and contracts. Then read the files named in the task. Then reproduce the reported behavior. Then make the smallest change that addresses the cause. Then rebuild and rerun the same reproduction. A model that skips early repository inspection tends to invent line numbers, commands, data formats, and expected behavior. Even when those inventions sound plausible, they waste time because later work must be redone against reality.
+
+Another version of the same mistake is reading only the function under repair. Assembly bugs often live in the contract between routines, not inside one routine. A parser may be correct in isolation while its caller passes an invalid pointer. A UI mutation may be correct while its failure path omits rollback. An allocator may work for the first candidate while breaking on retry. Therefore, follow values across call boundaries and lifecycle boundaries: allocation, mutation, persistence, reload, filtering, selection, editing, cancellation, clipboard service, and shutdown.
+
+Chapter 3. Do not present unverified output as verification
+
+A closely related mistake is to write something that looks like a test without executing the current binary. Long synthetic scripts, illustrative key sequences, hypothetical JSON results, and expected screenshots are not verification. They are plans for verification. On this project, verification meant rebuilding after the latest source change, running the actual executable, driving it through X11 when necessary, inspecting the resulting database with a JSON checker, and confirming persistence by reopening the same database.
+
+This distinction matters because an earlier binary can pass while the current source fails. A helper can work before a new call site is added and break afterward. A change to one register convention can invalidate a previously successful run. Consequently, a test result should always identify what was tested: the current rebuilt binary, the fixture used, the exact action sequence, and the observed database or screenshot. If any of those is missing, the result should be described as a hypothesis, not a fact.
+
+The final report should also be concise and grounded. Vague statements such as comprehensive testing passed are less useful than a short list of rebuilt artifacts, regression commands, fixtures, and observed results. When referring to code, use file and line references where practical, but remember that line numbers move. Identifiers, routine names, global state names, and exact commands are more durable.
+
+Chapter 4. Assembly contracts are load-bearing
+
+The most concrete technical failure in this work was a segmentation fault caused by register-lifetime confusion in the unique identifier allocator. A collision-check callback was kept in a volatile register, a helper used that register internally, and a subsequent indirect call jumped to corrupted state. The first allocation path often worked because no collision occurred, which hid the bug until a retry path was exercised.
+
+The lesson is that every helper has an implicit or explicit register contract. A model must know which registers survive a call, which registers a callee may destroy, which registers a system call clobbers, and what stack alignment is required before a call. Linux system calls clobber RCX and R11. Caller-saved registers do not survive helper calls. Callee-saved registers must be preserved by routines that use them. Stack alignment must be rechecked after prologues change. A comment claiming alignment or preservation is not proof; the prologue, calls, early returns, and epilogue must agree.
+
+When a value must survive a helper call, do not leave it in scratch state. Store it in memory, reload it every loop iteration, or use a properly preserved register. Collision handling, retry loops, callbacks, parser cursors, record pointers, and buffer lengths are especially dangerous because they are live across calls. Any new call inserted into an old loop can invalidate an old assumption. Therefore, every added call should trigger a small audit of all live registers and memory state.
+
+Early returns deserve equal attention. A routine that reserves stack space after a capacity check, then shares an epilogue with the normal path, can restore the wrong stack pointer and pop the wrong registers. The fix is either to reserve resources before branching or to give exceptional paths their own epilogues. Boundary tests should directly exercise capacity, empty input, full tables, and maximum nesting, because those paths are rarely covered by normal fixtures.
+
+Chapter 5. Persistence must be transactional
+
+A major class of database mistakes came from treating an in-memory mutation as equivalent to a persisted mutation. Favorite toggles, deletions, collection changes, assignments, renames, and edit commits changed memory before saving. When saving failed, the interface sometimes reported failure while memory retained the failed action. A later successful unrelated save could then persist an action the user had been told failed.
+
+The correct mental model is transactional. A destructive or user-visible mutation should capture enough prior state to restore memory if persistence fails. Snapshot the affected records, counts, selection state, filter state, editor buffers, version history, and metadata before mutation. Restore all of it on failure. Failed edit commits should generally keep the editor open rather than closing it and losing context. Retries should not append duplicate versions. Read-only mode must be a real mode, not merely an error message: the program should preserve the existing file, avoid overwriting it, and make failures visible at startup when appropriate.
+
+Atomic replacement also requires care beyond rename. A temporary file must not be predictable in a shared or untrusted directory. It should be unique, created exclusively, cleaned up on failure, and replaced atomically in the same directory where possible. Permissions and ownership deserve explicit handling. Replacing a private database with a broadly readable file is a security regression, even if the JSON content is correct. Every durability-relevant system call matters: write, fsync, close, rename, cleanup, and where supported parent-directory fsync. Interrupted calls should be retried where appropriate. Unchecked success codes convert durability claims into fiction.
+
+Seeding is another lifecycle trap. Seeding demo data is acceptable for a true first run, normally indicated by the database file being absent. It is unacceptable to replace an existing file merely because it failed to open, failed validation, was empty in a meaningful way, or contained data the parser could not fully represent. Lossy imports must be marked as lossy. The original file should be preserved and exposed as read-only unless the user explicitly approves destructive replacement.
+
+Chapter 6. Parsers must validate structure, bounds, numbers, and encoding
+
+The JSON parser work exposed several recurring LLM weaknesses. The first is unbounded scanning. Fixed-width key comparisons must verify that enough input remains before reading the key and closing quote. Scanning for a key without tracking object depth can mistake nested data for top-level data. Strings, nested objects, truncated input, and decoy keys must be part of the test set. A parser that works on clean fixtures can still read beyond its buffer or load the wrong array.
+
+The second weakness is incomplete numeric validation. A parser should not consume a minus sign without applying it, accept a nonstandard plus sign, wrap on overflow, return zero when no digits exist, or silently narrow a value without checking its range. Numbers should be validated as complete tokens. Unsupported forms should be rejected explicitly. Out-of-range values should either use a wider representation or cause a controlled error. Silent coercion changes data while pretending to preserve it.
+
+The third weakness is Unicode handling. Raw bytes are not UTF-8 merely because they came from a backslash escape. A correct implementation requires exactly four hexadecimal digits, combines valid surrogate pairs, encodes the resulting code point as UTF-8, and gives malformed escapes, unpaired surrogates, and embedded NUL a defined safe treatment. ASCII, Latin-1, BMP, supplementary characters, malformed escapes, and NUL must all be tested. Encoding boundaries matter because one source character can expand to multiple output bytes, affecting buffer limits and persistence.
+
+The fourth weakness is asymmetric serialization. Tags were flattened into a comma-separated string on import and split on commas on export. Commas inside tags, meaningful spaces, empty tags, quotes, and backslashes did not survive. Import and export must be designed together. If the user interface needs a flattened representation, it must use a reversible escaping scheme or retain structured values through the entire pipeline. Round-trip tests should use adversarial data, not only clean examples.
+
+The fifth weakness is silent truncation. Fixed limits may be intentional, but silently discarding excess records, fields, versions, or bytes is not. Every truncation or skipped entry should be detected and marked. Lossy state must prevent automatic replacement of the source. Repeated loads must also clear prior slots completely; otherwise omitted fields inherit stale identifiers, descriptions, timestamps, versions, or collection metadata from the previous document.
+
+Chapter 7. User-interface state must follow identity, not position
+
+Several UI bugs came from resolving the wrong record after the visible list changed. Live filtering could move another snippet into the edited snippet filter slot. Editing, cancellation, commit, scrolling, and detail rendering could then operate on the wrong record. The repair was to pin the editing target when editing begins and use that stable identity through every helper, commit, cancellation, and detail path.
+
+The broader lesson is that position is unstable. Selection indexes, filter slots, scroll offsets, and cursor positions are views onto data, not identities. Global UI state should not leak between records. Scroll position should reset or follow record identity when selection changes. Rendering, hit-testing, caret placement, and layout must share one source of truth. If rendering truncates a language label, hit-testing and the caret must use the same displayed width. If rendering recognizes CRLF, cursor motion and line calculations must use the same delimiter policy.
+
+Creation and cancellation need the same discipline. Incrementing a count before a successful commit creates an entity before the user has committed to it. Canceling field edits while leaving a blank snippet or default collection behind contradicts the cancellation message. A cleaner model edits a temporary record and inserts it only after success, or tracks creation explicitly and removes the uncommitted entity on cancellation.
+
+Version history also needs a notion of meaningful change. Every commit should not blindly push a version. No-op commits can duplicate snapshots, evict useful history, and create empty initial versions. Metadata-only changes can update timestamps and save without adding a code version. Retries after failed saves must not add another version for the same logical change.
+
+Chapter 8. Identifiers and time must be unique and interoperable
+
+Using only a truncated seconds timestamp for identifiers caused duplicates when snippets or collections were created in the same second. Duplicate collection identifiers were especially harmful because matching and deletion depended on them. The fix combined a larger timestamp with process identity, a monotonic sequence, and a collision check against the existing namespace.
+
+The lesson has two parts. First, uniqueness must be engineered, not assumed. Clock granularity, process reuse, rapid user actions, restored fixtures, and imported data can all defeat naive timestamp IDs. A robust scheme includes randomness or a full timestamp plus a monotonic component, followed by verification against all existing identifiers. Tests should create multiple entities within one clock tick and import identifiers that resemble newly generated ones.
+
+Second, time units must be shared explicitly. Native seconds and web milliseconds are not interchangeable. A timestamp that is correct in one subsystem can appear to come from 1970 in another. One shared realtime helper and one stored unit prevent an entire class of sorting and display errors. Capacity calculations must also be realistic: maximum process IDs, long uptimes, repeated collisions, and expanded ID lengths must fit in their buffers.
+
+Chapter 9. Platform and protocol details are contracts, not conveniences
+
+X11 and clipboard work exposed the danger of programming for the observed environment instead of the API contract. A null graphics context must be checked. Partial initialization must follow a single cleanup path. Window-close handling must validate message type, format, data, and window rather than matching one payload value. Escape must be recognized through keysym lookup rather than a hard-coded keycode. Clipboard selection requests must handle missing properties, target encodings, request timestamps, and ownership clearing correctly. UTF-8 bytes must not be served blindly as Latin-1. Redundant expose repaints should be coalesced.
+
+Clipboard behavior deserves special emphasis. Copying must snapshot both bytes and length into dedicated immutable storage. Serving a pointer into mutable record memory allows later edits, deletions, compaction, or allocations to change paste results. Selection clearing must reset ownership state. Clipboard tests should mutate or delete the source after copying and verify that paste still returns the copied snapshot.
+
+Input and rendering assumptions also need scrutiny. Accepting only printable ASCII, assuming fixed font metrics, clipping long fields without a viewport, and confusing bytes with display columns may work for an initial prototype but will fail for localized or adversarial text. Font fallback, actual metrics, horizontal scrolling or a consistent viewport, and UTF-8-aware boundaries should be introduced before claiming text support.
+
+Chapter 10. Keep code, audit, contracts, and tests synchronized
+
+Another recurring mistake is updating code without updating the surrounding sources of truth. The implementation can move forward while the review document still describes old line numbers and old behavior. Contracts can omit new invariants. Checklists can miss new mutation paths. Build scripts can remain weak. Legacy or fake UI sources can remain beside active code and confuse future readers.
+
+Every behavioral fix should therefore consider four companion updates. First, preserve or update the audit trail so it does not mislead the next reader. Second, update the contract or checklist with the new invariant. Third, add or extend regression coverage for the exact failure. Fourth, keep the build strict enough to catch nearby mistakes. Record layouts should use named structures or compile-time assertions rather than relying on manual arithmetic. Build scripts should check tools, enable useful warnings, and run parser, persistence, ABI, and state-transition regressions.
+
+Repository hygiene is part of the same lesson. Dead dispatch logic, duplicate symbols, stale phase headers, unused atoms, misleading comments, and legacy preview files increase the chance that a future model will edit the wrong path. Remove dead code or move legacy material to an explicitly named archive. Do not link alternative implementations together. Make the active path obvious.
+
+Chapter 11. A practical operating procedure
+
+A future model can avoid most of these mistakes by following a short operating procedure. Begin by inspecting repository status, build scripts, contracts, review findings, and the exact files named in the task. Reproduce the issue with the current rebuilt binary and a disposable fixture. Identify the narrowest cause across routine boundaries. Preserve existing user data and use scratch databases for destructive tests. Make the smallest source change that restores the violated contract. Add or update regression coverage for normal behavior and edge cases. Rebuild, rerun static checks, rerun parser and persistence tests, rerun UI flows, and reopen saved databases. Update the review, contract, and checklist if behavior or invariants changed. Finally, report what was rebuilt, what was run, what passed, what remains unverified, and which files changed.
+
+That procedure would have prevented the major errors here. It would have exposed the wrong initial scaffolding, prevented unverified claims, caught the volatile-register callback bug, forced transactional save behavior, required adversarial parser fixtures, pinned UI identity through filtering, and kept documentation synchronized with code. The project does not primarily reward cleverness. It rewards careful lifecycle reasoning, explicit contracts, reproducible evidence, and refusal to claim completion before the current binary proves it.
